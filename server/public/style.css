@@ -158,3 +158,8 @@ body.overlay.click-through .leaflet-control-zoom { display: none; }
 body.overlay .mk-label { font-size: 11px; }
 body.overlay .map-status { font-size: 11px; top: 6px; padding: 5px 8px; }
 a.btn { text-decoration: none; display: inline-block; margin: 4px 4px 0 0; }
+.create { display: grid; gap: 8px; margin-top: 12px; }
+.create input { width: 100%; }
+.create .btn.primary { margin-top: 0; }
+.error-text { color: var(--boss); margin: 0; font-size: 13px; }
+.small-print { font-size: 12px; margin: 10px 0 0; }

@@ -92,10 +92,21 @@ async function boot() {
 
 function showLanding() {
   $("#landing").hidden = false;
-  $("#create-room").onclick = () => {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const code = Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) => alphabet[b % alphabet.length]).join("");
-    location.href = `/r/${code}`;
+  $("#create-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const err = $("#create-error");
+    err.hidden = true;
+    $("#create-room").disabled = true;
+    try {
+      const res = await fetch("/api/rooms", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: $("#squad-password").value }) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      location.href = `/r/${body.room}`;
+    } catch (ex) {
+      err.textContent = ex.message;
+      err.hidden = false;
+      $("#create-room").disabled = false;
+    }
   };
   $("#join-form").onsubmit = (e) => {
     e.preventDefault();
@@ -155,6 +166,7 @@ async function loadData(attempt = 0) {
     setStatus(null);
   } catch (err) {
     console.warn("map data:", err);
+    if (app.dead) return;
     if (!app.maps.length && Object.keys(app.calibration).length) useMaps(FALLBACK_MAPS);
     setStatus(`<b>Extracts, bosses and quests are temporarily unavailable.</b><br><span class="muted">tarkov.dev isn't responding. Positions and pings still work. Retrying automatically…</span>`);
     setTimeout(() => loadData(attempt + 1), Math.min(60000, 10000 * (attempt + 1)));
@@ -167,7 +179,8 @@ async function loadData(attempt = 0) {
 }
 
 async function fetchData(name) {
-  const res = await fetch(`/api/data/${name}`);
+  const res = await fetch(`/api/data/${name}?room=${encodeURIComponent(app.room)}`);
+  if (res.status === 403) { roomNotFound(); throw new Error("unknown room"); }
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
@@ -178,12 +191,24 @@ function calibrationFor(map) {
   return app.calibration[key] ?? null;
 }
 
+function roomNotFound() {
+  app.dead = true;
+  app.ws?.close();
+  setStatus(`<b>This room doesn't exist.</b><br><span class="muted">Check the invite link, or <a href="/">create a new room</a>.</span>`);
+}
+
 function connect() {
+  if (app.dead) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/api/room/${app.room}/ws`);
   app.ws = ws;
-  ws.onopen = () => { $("#conn").classList.add("ok"); send({ t: "hello", name: app.name }); };
-  ws.onclose = () => { $("#conn").classList.remove("ok"); setTimeout(connect, 2000); };
+  ws.onopen = () => { app.retries = 0; $("#conn").classList.add("ok"); send({ t: "hello", name: app.name }); };
+  ws.onclose = () => {
+    $("#conn").classList.remove("ok");
+    // Back off so a dead connection doesn't burn through the server's request allowance.
+    app.retries = (app.retries ?? 0) + 1;
+    setTimeout(connect, Math.min(30000, 1000 * 2 ** Math.min(app.retries, 5)));
+  };
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.t !== "state") return;

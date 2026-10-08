@@ -53,6 +53,29 @@ const TASKS_QUERY = `{
 
 const DATASETS = { maps: MAPS_QUERY, tasks: TASKS_QUERY };
 
+// ---------- room codes: 8 random chars + 8-char HMAC tag, so only this server can mint them ----------
+
+const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const toCode = (bytes, n) => Array.from(bytes.slice(0, n), (b) => ALPHABET[b % ALPHABET.length]).join("");
+
+async function roomTag(rand, key) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return toCode(new Uint8Array(await crypto.subtle.sign("HMAC", k, new TextEncoder().encode(rand))), 8);
+}
+async function signRoom(key) {
+  const rand = toCode(crypto.getRandomValues(new Uint8Array(8)), 8);
+  return rand + (await roomTag(rand, key));
+}
+async function verifyRoom(code, key) {
+  if (code.length !== 16) return false;
+  return sameSecret(code.slice(8), await roomTag(code.slice(0, 8), key));
+}
+// Constant-time comparison (hash both so lengths match).
+async function sameSecret(a, b) {
+  const [ha, hb] = await Promise.all([a, b].map((s) => crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))));
+  return crypto.subtle.timingSafeEqual(ha, hb);
+}
+
 function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
     status,
@@ -65,8 +88,27 @@ export default {
     const url = new URL(request.url);
     const parts = url.pathname.split("/").filter(Boolean); // ["api", ...]
 
-    // GET /api/data/:dataset — tarkov.dev data, cached in a Durable Object so an upstream outage doesn't break us.
+    // POST /api/rooms {password} — create a room. Only people with the squad password can make rooms.
+    if (parts[1] === "rooms" && request.method === "POST") {
+      if (!env.SQUAD_PASSWORD || !env.ROOM_KEY) return json({ error: "Room creation isn't set up on this server." }, 503);
+      const ip = request.headers.get("cf-connecting-ip") || "unknown";
+      const guard = env.ROOMS.get(env.ROOMS.idFromName(`guard:${ip}`));
+      if (!(await guard.attemptAllowed())) return json({ error: "Too many wrong passwords. Try again in an hour." }, 429);
+      const body = await request.json().catch(() => ({}));
+      if (!(await sameSecret(String(body.password ?? ""), env.SQUAD_PASSWORD))) {
+        await guard.recordFailure();
+        return json({ error: "Wrong squad password." }, 403);
+      }
+      return json({ room: await signRoom(env.ROOM_KEY) });
+    }
+
+    // Everything below needs a room code this server signed: random people can't invent rooms or hammer the data proxy.
+    const roomCode = parts[1] === "room" ? parts[2] : url.searchParams.get("room");
+    const validRoom = roomCode && ROOM_RE.test(roomCode) && env.ROOM_KEY && (await verifyRoom(roomCode, env.ROOM_KEY));
+
+    // GET /api/data/:dataset?room=CODE — tarkov.dev data, cached in a Durable Object so an upstream outage doesn't break us.
     if (parts[1] === "data" && DATASETS[parts[2]] && request.method === "GET") {
+      if (!validRoom) return json({ error: "unknown room" }, 403);
       const stub = env.ROOMS.get(env.ROOMS.idFromName("__data_cache__"));
       return stub.getDataset(parts[2]).then(
         (body) => new Response(body, { headers: { "content-type": "application/json", "cache-control": "public, max-age=300" } }),
@@ -91,7 +133,8 @@ export default {
     }
 
     // /api/room/:room/ws (browser) and /api/room/:room/event (companion)
-    if (parts[1] === "room" && ROOM_RE.test(parts[2] || "") && !parts[2].startsWith("__")) {
+    if (parts[1] === "room") {
+      if (!validRoom) return json({ error: "unknown room" }, 403);
       const stub = env.ROOMS.get(env.ROOMS.idFromName(`room:${parts[2]}`));
       if (parts[3] === "ws") {
         if (request.headers.get("Upgrade") !== "websocket") return json({ error: "expected websocket" }, 426);
@@ -242,6 +285,19 @@ export class RaidRoom extends DurableObject {
     try {
       ws.close(code, "bye");
     } catch {}
+  }
+
+  // ---------- password guessing guard (only used by "guard:<ip>" instances) ----------
+
+  async attemptAllowed() {
+    const fails = ((await this.ctx.storage.get("fails")) || []).filter((t) => Date.now() - t < 3600_000);
+    return fails.length < 10;
+  }
+
+  async recordFailure() {
+    const fails = ((await this.ctx.storage.get("fails")) || []).filter((t) => Date.now() - t < 3600_000);
+    fails.push(Date.now());
+    await this.ctx.storage.put("fails", fails);
   }
 
   // ---------- tarkov.dev data cache (only used by the "__data_cache__" instance) ----------

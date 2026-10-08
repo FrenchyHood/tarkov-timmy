@@ -16,7 +16,12 @@
     <div class="landing-card">
       <h1><span class="logo-mark"></span>Tarkov Timmy</h1>
       <p class="muted">Never lose your extract again. A live map for you and your squad: extracts, bosses, quests and pings. Create a room and send your squad the link.</p>
-      <button id="create-room" class="btn primary">Create a squad room</button>
+      <form id="create-form" class="create">
+        <input id="squad-password" type="password" placeholder="Squad password" autocomplete="current-password" required />
+        <button id="create-room" class="btn primary">Create a squad room</button>
+        <p id="create-error" class="error-text" hidden></p>
+      </form>
+      <p class="muted small-print">Got an invite link? Just open it — no password needed.</p>
       <form id="join-form" class="join">
         <input id="join-code" placeholder="or enter a room code" autocomplete="off" spellcheck="false" />
         <button class="btn">Join</button>
