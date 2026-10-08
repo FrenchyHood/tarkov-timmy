@@ -1,0 +1,78 @@
+# Tarkov Timmy
+
+Never lose your extract again. A live squad map for Escape from Tarkov (PvP): everyone's position, the extracts you have this raid, bosses, danger zones, transits, and your squad's quest objectives, plus a mini-map overlay that floats over the game.
+
+Deploy the `server/` folder to your own Cloudflare account (free) and share room links from there.
+
+```
+[Your PC]   Tarkov Timmy app ─┐  HTTPS                        WebSocket
+                              ├──────────► Cloudflare Worker ◄───────────► browser / phone / app windows
+[Friend PC] Tarkov Timmy app ─┘            + Durable Object per room
+                                           + cached tarkov.dev data
+```
+
+| Folder | What it is |
+| --- | --- |
+| `server/` | Cloudflare Worker: serves the map site, keeps each squad room in a Durable Object, caches tarkov.dev data (and serves the last good copy if tarkov.dev is down). Free plan. |
+| `desktop/` | **Tarkov Timmy** Windows app (Electron): installer, tray icon, position sharing, overlay, alerts, auto-updates. |
+| `companion/` | The original standalone Python companion. Superseded by the app, kept as a no-install fallback. |
+
+## How live position works (BattlEye-safe)
+
+Nothing reads game memory or hooks into the game. The app only reads files Tarkov writes by itself:
+
+1. **Screenshots.** When you press the in-game screenshot key (Print Screen by default), Tarkov names the file after your coordinates and facing. The app reads the name, sends your position, and optionally deletes the file.
+2. **Log files.** They say which map you queued into and when the raid starts and ends, so the map switches by itself and the raid timer runs.
+
+**Your marker only updates when you press the screenshot key.** The app deliberately does not press it for you, because simulated keypresses into the game look like a macro to anti-cheat.
+
+The overlay is a normal always-on-top window, not an injected one. It shows over Tarkov only in **Borderless** screen mode (Tarkov Settings → Graphics).
+
+## Using it
+
+- **Create a room** on the site, then click **Invite** to copy the link for your squad.
+- **Extracts:** in raid, double-tap **O**, then tick your extracts in the Extracts tab. The whole squad sees them highlighted, and the picks reset each raid.
+- **Pings:** right-click (or long-press on a phone) the map: Go here / Enemy / Loot / Danger / I'm here. Squadmates get a sound and a Windows notification.
+- **Quests:** tick your active quests; their objectives show on the map in your color for everyone.
+- **Raid timer** with sound alerts at 10 and 5 minutes left.
+- **Overlay** (app): **F9** shows/hides it, **F10** switches between clicking the map and clicking through to the game. Drag it by its top bar; size, position and opacity are remembered. Hotkeys can be changed in Settings.
+
+## Desktop app
+
+```bash
+cd desktop
+npm install
+npm start          # run from source
+npm run dist       # build dist/Tarkov-Timmy-Setup-<version>.exe
+npm run release    # build + publish a GitHub release (auto-update source); needs GH_TOKEN
+```
+
+- Settings live in `%APPDATA%\Tarkov Timmy\settings.json`.
+- Join links: `tarkovtimmy://join/<ROOM>?server=<site origin>` opens the app straight into a room. The site's Squad tab has an "Open this room in the app" button.
+- Releasing an update: bump `version` in `desktop/package.json`, run `npm run release`. Installed apps download it in the background and install on next quit.
+- The installer is unsigned, so Windows SmartScreen shows "Windows protected your PC" on first run: click **More info → Run anyway**.
+
+## Server
+
+```bash
+cd server
+npm install
+npx wrangler dev       # local at http://localhost:8787
+npx wrangler deploy    # publish
+```
+
+`DOWNLOAD_URL` in `server/wrangler.jsonc` sets where the site's "Download for Windows" button points.
+
+Workers free plan limits are 100k requests a day, and each WebSocket message counts as 1/20 of a request. A squad won't get close.
+
+## Data and credits
+
+- Map art, calibration (`server/public/calibration.json`), extracts, bosses, quests and hazards: [tarkov.dev](https://tarkov.dev) ([MIT](https://github.com/the-hideout/tarkov-dev/blob/main/LICENSE)), PvP data.
+- Screenshot and log parsing follows [TarkovMonitor](https://github.com/the-hideout/TarkovMonitor) (MIT).
+- Extract keys and gear limits (paracord, no backpack, ...) aren't in the API. The Extracts tab links each map's wiki.
+
+## Ideas for later
+
+- Discord Activity wrapper, so the map launches inside your voice channel.
+- Auto-track quests from the "quest started/finished" notifications in Tarkov's logs.
+- Position trail; auto-pick the floor from your height.

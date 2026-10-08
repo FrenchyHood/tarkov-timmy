@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+companion/config.json
+build/
+dist/
+*.spec
+__pycache__/
+desktop/dist/
+.claude/

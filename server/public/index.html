@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tarkov Timmy</title>
+  <meta name="description" content="Live squad map for Tarkov: extracts, bosses, quests, pings and an in-game overlay." />
+  <meta name="theme-color" content="#14161a" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3l11 26-11-6-11 6z' fill='%23d6b25e'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- Landing: create or join a room -->
+  <section id="landing" hidden>
+    <div class="landing-card">
+      <h1><span class="logo-mark"></span>Tarkov Timmy</h1>
+      <p class="muted">Never lose your extract again. A live map for you and your squad: extracts, bosses, quests and pings. Create a room and send your squad the link.</p>
+      <button id="create-room" class="btn primary">Create a squad room</button>
+      <form id="join-form" class="join">
+        <input id="join-code" placeholder="or enter a room code" autocomplete="off" spellcheck="false" />
+        <button class="btn">Join</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Name prompt -->
+  <dialog id="name-dialog">
+    <form method="dialog" id="name-form">
+      <h2>What's your callsign?</h2>
+      <p class="muted">Use the same name in the companion app so your position links up.</p>
+      <input id="name-input" maxlength="24" required autocomplete="off" spellcheck="false" />
+      <button class="btn primary">Enter room</button>
+    </form>
+  </dialog>
+
+  <!-- Room view -->
+  <section id="room" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="logo-mark"></span><span class="brand-text">Tarkov Timmy</span></div>
+      <select id="map-select" title="Map"></select>
+      <select id="floor-select" title="Floor" hidden></select>
+      <div class="seg" id="faction-toggle" title="Which extracts to show">
+        <button data-faction="pmc">PMC</button><button data-faction="scav">Scav</button>
+      </div>
+      <span id="ov-map" class="overlay-only"></span>
+      <div id="raid-timer" class="raid-timer" hidden></div>
+      <div class="spacer"></div>
+      <span class="overlay-only ov-hint" id="ov-hint"></span>
+      <button id="overlay-btn" class="btn ghost desktop-only" title="Mini-map over the game">Overlay</button>
+      <a id="getapp-btn" class="btn ghost web-only" href="/api/download" target="_blank" rel="noopener" title="Windows app with overlay and automatic position sharing">Get the app</a>
+      <button id="share-btn" class="btn ghost" title="Copy room link">Invite</button>
+      <span id="conn" class="conn" title="Connection"></span>
+      <button id="panel-toggle" class="btn ghost panel-toggle" aria-label="Toggle panel">☰</button>
+    </header>
+
+    <main class="layout">
+      <div id="map-wrap">
+        <div id="map"></div>
+        <div id="map-status" class="map-status" hidden></div>
+        <div class="map-hint">Right-click / long-press the map to ping</div>
+      </div>
+
+      <aside id="panel">
+        <nav class="tabs">
+          <button data-tab="extracts" class="active">Extracts</button>
+          <button data-tab="bosses">Bosses</button>
+          <button data-tab="quests">Quests</button>
+          <button data-tab="squad">Squad</button>
+        </nav>
+        <div class="tab-body" id="tab-extracts"></div>
+        <div class="tab-body" id="tab-bosses" hidden></div>
+        <div class="tab-body" id="tab-quests" hidden></div>
+        <div class="tab-body" id="tab-squad" hidden></div>
+        <footer class="credits">Map data &amp; art: <a href="https://tarkov.dev" target="_blank" rel="noopener">tarkov.dev</a> (MIT)</footer>
+      </aside>
+    </main>
+  </section>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

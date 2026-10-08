@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>Tarkov Timmy — Settings</title>
+  <link rel="stylesheet" href="ui.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header class="hero">
+      <img src="../../assets/icon.png" alt="" width="44" height="44" />
+      <div>
+        <h1 id="heading">Welcome, Timmy</h1>
+        <p class="muted" id="subheading">Two quick things and you're in.</p>
+      </div>
+    </header>
+
+    <form id="form" autocomplete="off">
+      <section class="card">
+        <label class="field">
+          <span>Squad invite link</span>
+          <input id="link" placeholder="https://tarkov-timmy…/r/ABCD1234" spellcheck="false" />
+          <small class="muted" id="link-help">Ask whoever made the room to click <b>Invite</b> on the map and send you the link.</small>
+        </label>
+        <label class="field">
+          <span>Your callsign</span>
+          <input id="name" maxlength="24" placeholder="e.g. TimmyNoBackpack" spellcheck="false" />
+          <small class="muted">This is how you show up on your squad's map.</small>
+        </label>
+      </section>
+
+      <details id="more" class="more">
+      <summary>More options (overlay hotkeys, screenshots, startup)</summary>
+      <section class="card">
+        <h2>Overlay</h2>
+        <p class="muted small">A mini-map that floats over Tarkov. Set Tarkov's screen mode to <b>Borderless</b> (Settings → Graphics) or it can't show on top.</p>
+        <div class="grid2">
+          <label class="field"><span>Show / hide</span><input id="hk-overlay" class="hotkey" readonly /></label>
+          <label class="field"><span>Click-through</span><input id="hk-click" class="hotkey" readonly /></label>
+        </div>
+        <label class="field">
+          <span>Opacity <b id="opacity-val"></b></span>
+          <input id="opacity" type="range" min="0.3" max="1" step="0.05" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Position sharing</h2>
+        <p class="muted small">In raid, press your in-game <b>screenshot key</b> (Print Screen by default). Tarkov names the screenshot after your location, and Timmy reads it. Nothing touches the game itself.</p>
+        <label class="check"><input type="checkbox" id="delete" /> Delete those screenshots after reading them</label>
+        <label class="check"><input type="checkbox" id="startup" /> Start Tarkov Timmy with Windows (in the tray)</label>
+        <details>
+          <summary>Advanced</summary>
+          <label class="field">
+            <span>Tarkov logs folder</span>
+            <input id="logs" placeholder="Auto-detect" spellcheck="false" />
+            <small class="muted" id="logs-detected"></small>
+          </label>
+        </details>
+      </section>
+
+      </details>
+
+      <section class="card status" id="status"></section>
+
+      <p class="error" id="error" hidden></p>
+      <div class="actions">
+        <span class="muted small" id="version"></span>
+        <button class="btn primary" id="save">Let's go</button>
+      </div>
+    </form>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>
