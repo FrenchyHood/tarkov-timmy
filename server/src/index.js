@@ -74,10 +74,20 @@ export default {
       );
     }
 
-    // GET /api/download — latest Windows installer (DOWNLOAD_URL in wrangler.jsonc).
+    // GET /api/download — newest installer from the GitHub repo's latest release (GITHUB_REPO in wrangler.jsonc).
     if (parts[1] === "download") {
-      if (env.DOWNLOAD_URL) return Response.redirect(env.DOWNLOAD_URL, 302);
-      return new Response("The Tarkov Timmy app isn't published yet. Ask your squad leader for the installer.", { status: 404 });
+      if (!env.GITHUB_REPO) return new Response("The Tarkov Timmy app isn't published yet.", { status: 404 });
+      const releases = `https://github.com/${env.GITHUB_REPO}/releases/latest`;
+      try {
+        const res = await fetch(`https://api.github.com/repos/${env.GITHUB_REPO}/releases/latest`, {
+          headers: { "user-agent": "tarkov-timmy", accept: "application/vnd.github+json" },
+          cf: { cacheTtl: 600, cacheEverything: true },
+        });
+        const exe = res.ok && (await res.json()).assets?.find((a) => /Setup.*\.exe$/i.test(a.name));
+        return Response.redirect(exe ? exe.browser_download_url : releases, 302);
+      } catch {
+        return Response.redirect(releases, 302);
+      }
     }
 
     // /api/room/:room/ws (browser) and /api/room/:room/event (companion)

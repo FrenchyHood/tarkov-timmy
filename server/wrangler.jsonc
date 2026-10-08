@@ -2,8 +2,8 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tarkov-timmy",
   "vars": {
-    // Where "Download for Windows" points. Set to the GitHub releases page once published.
-    "DOWNLOAD_URL": ""
+    // "Download for Windows" serves the newest installer from this repo's latest GitHub release.
+    "GITHUB_REPO": "FrenchyHood/tarkov-timmy"
   },
   "main": "src/index.js",
   "compatibility_date": "2025-09-01",

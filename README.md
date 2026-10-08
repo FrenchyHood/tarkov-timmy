@@ -61,7 +61,7 @@ npx wrangler dev       # local at http://localhost:8787
 npx wrangler deploy    # publish
 ```
 
-`DOWNLOAD_URL` in `server/wrangler.jsonc` sets where the site's "Download for Windows" button points.
+`GITHUB_REPO` in `server/wrangler.jsonc` sets which repo's latest release the site's "Download for Windows" button serves.
 
 Workers free plan limits are 100k requests a day, and each WebSocket message counts as 1/20 of a request. A squad won't get close.
 
