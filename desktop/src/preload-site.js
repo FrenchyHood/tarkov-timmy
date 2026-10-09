@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld("timmyDesktop", {
   toggleOverlay: () => ipcRenderer.send("timmy:toggle-overlay"),
   toggleClickThrough: () => ipcRenderer.send("timmy:toggle-click-through"),
   setOpacity: (v) => ipcRenderer.send("timmy:set-opacity", Number(v)),
+  resizeOverlay: (width, height) => ipcRenderer.send("timmy:overlay-resize", { width, height }),
+  resizeOverlayDone: () => ipcRenderer.send("timmy:overlay-resize-done"),
 });

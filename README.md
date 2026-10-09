@@ -34,8 +34,11 @@ The overlay is a normal always-on-top window, not an injected one. It shows over
 - **Extracts:** in raid, double-tap **O**, then tick your extracts in the Extracts tab. The whole squad sees them highlighted, and the picks reset each raid.
 - **Pings:** right-click (or long-press on a phone) the map: Go here / Enemy / Loot / Danger / I'm here. Squadmates get a sound and a Windows notification.
 - **Quests:** detected automatically from Tarkov's logs (accepted quests appear, finished ones drop off), or tick them by hand. Objectives show on the map in your color for everyone.
+- **Route tab:** a suggested order to visit your squad's quest objectives plus the best-value loot containers on the way, ending at your ticked extract. Straight lines between stops (there's no walkable-path data for Tarkov). Stops you've screenshotted near drop off.
+- **Follow me (◎):** keeps your pin centred at your zoom, also after a refresh. Panning pauses it.
+- **PMC / Scav** is detected automatically from the raid start (your PMC profile is learned from raids with a start countdown).
 - **Raid timer** with sound alerts at 10 and 5 minutes left.
-- **Overlay** (app): **F9** shows/hides it, **F10** switches between clicking the map and clicking through to the game. Drag it by its top bar; size, position and opacity are remembered. Hotkeys can be changed in Settings.
+- **Overlay** (app): **F9** shows/hides it, **F10** switches between clicking the map and clicking through to the game. Drag it by its top bar and resize from any edge or the corner grip; size, position and opacity are remembered. It mirrors the main window's layers, floor, map and route settings. Hotkeys can be changed in Settings.
 
 ## Desktop app
 

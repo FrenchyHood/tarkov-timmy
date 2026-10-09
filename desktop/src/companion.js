@@ -11,6 +11,7 @@ const SCREENSHOT_RE = /\d{4}-\d{2}-\d{2}\[\d{2}-\d{2}\]_?(.+) \(\d\)\.png$/;
 const POSITION_RE =
   /(-?\d+\.\d{2}), (-?\d+\.\d{2}), (-?\d+\.\d{2})_?(-?[\d.]\.\d{1,5}), (-?[\d.]\.\d{1,5}), (-?[\d.]\.\d{1,5}), (-?[\d.]\.\d{1,5})/;
 const LOCATION_RE = /Location: ([^,]+)/;
+const PROFILE_RE = /Profileid: (\w+)/;
 const SCENE_RE = /scene preset path:maps\/([A-Za-z0-9_]+)\.bundle/;
 // Scene bundle -> tarkov.dev nameId for bundles seen in real logs; profileStatus fills in the rest.
 const SCENE_TO_MAP = {
@@ -81,6 +82,8 @@ function gameRunning() {
 // message whose type is 10 (started), 11 (failed) or 12 (finished) and whose templateId starts with the
 // quest id (same ids as tarkov.dev). Feed it lines in order; it returns { id, status } when a message completes.
 const LOG_LINE_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
+// "2026-10-08 17:36:12.521|..." -> epoch ms (local time; only differences matter).
+const lineTime = (line) => Date.parse(line.slice(0, 23).replace(" ", "T")) || 0;
 const QUEST_STATUS = { 10: "started", 11: "failed", 12: "finished" };
 const QUEST_ID_RE = /^[0-9a-f]{24}$/;
 
@@ -169,6 +172,43 @@ function readQuestHistory(logsDir) {
   return { active, ended };
 }
 
+// Your PMC's profile id: the profile of the most recent raid on disk that had a start countdown.
+function findPmcProfile(logsDir) {
+  let pmc = null;
+  let sessions = [];
+  try {
+    sessions = fs.readdirSync(logsDir).filter((n) => n.startsWith("log_")).sort();
+  } catch {
+    return null;
+  }
+  for (const session of sessions) {
+    let files = [];
+    try {
+      files = fs.readdirSync(path.join(logsDir, session)).filter((f) => f.includes("application") && f.endsWith(".log")).sort();
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      let profile = null, startingAt = null;
+      let text = "";
+      try {
+        text = fs.readFileSync(path.join(logsDir, session, f), "utf8");
+      } catch {
+        continue;
+      }
+      for (const line of text.split("\n")) {
+        if (line.includes("TRACE-NetworkGameCreate profileStatus")) profile = PROFILE_RE.exec(line)?.[1] ?? null;
+        else if (line.includes("application|GameStarting")) startingAt = lineTime(line);
+        else if (line.includes("application|GameStarted")) {
+          if (profile && startingAt && lineTime(line) - startingAt > 3000) pmc = profile;
+          startingAt = null;
+        }
+      }
+    }
+  }
+  return pmc;
+}
+
 class LogTailer {
   constructor(dir) {
     this.dir = dir;
@@ -235,13 +275,18 @@ class LogTailer {
 
   handle(line) {
     if (line.includes("TRACE-NetworkGameCreate profileStatus")) {
+      this.raidProfile = PROFILE_RE.exec(line)?.[1] ?? null;
       const m = LOCATION_RE.exec(line);
       if (m) {
         this.map = m[1].trim();
         return this.state("loading");
       }
+    } else if (line.includes("application|GameStarting")) {
+      this.startingAt = lineTime(line);
     } else if (line.includes("application|GameStarted")) {
-      return this.state("started");
+      const countdown = this.startingAt ? lineTime(line) - this.startingAt : 0;
+      this.startingAt = null;
+      return this.state("started", { faction: this.raidFaction(countdown) });
     } else if (line.includes("Network game matching aborted") || line.includes("Network game matching cancelled") || line.includes("Got notification | UserMatchOver")) {
       return this.state("ended");
     } else if (line.includes("application|scene preset path:")) {
@@ -254,10 +299,20 @@ class LogTailer {
     return null;
   }
 
-  state(s) {
+  // PMC or Scav? Your PMC and Scav are separate profiles, so once we know the PMC's profile id the raid's
+  // profile answers it. We learn that id from any raid with a start countdown (only PMC raids have one;
+  // joining a friend's raid can skip it). Until then, the countdown itself is the best guess.
+  raidFaction(countdown) {
+    if (countdown > 3000 && this.raidProfile) this.pmcProfile = this.raidProfile;
+    if (this.pmcProfile && this.raidProfile) return this.raidProfile === this.pmcProfile ? "pmc" : "scav";
+    return countdown > 3000 ? "pmc" : "scav";
+  }
+
+  state(s, extra = {}) {
     if (s === this.raidState) return null;
     this.raidState = s;
-    const ev = { type: "raid", state: s, map: this.map };
+    if (s !== "started") this.startingAt = s === "loading" ? this.startingAt : null;
+    const ev = { type: "raid", state: s, map: this.map, ...extra };
     if (s === "started") ev.startedAt = Date.now();
     return ev;
   }
@@ -289,6 +344,7 @@ class Companion extends EventEmitter {
 
     if (logsDir) {
       this.tailer = new LogTailer(logsDir);
+      this.tailer.pmcProfile = findPmcProfile(logsDir);
       this.tailer.scan();
       this.tailer.poll(); // catch up silently
       const running = await gameRunning();
@@ -398,4 +454,4 @@ class Companion extends EventEmitter {
   }
 }
 
-module.exports = { Companion, parseScreenshot, LogTailer, QuestParser, readQuestHistory, findLogsDir };
+module.exports = { Companion, parseScreenshot, LogTailer, QuestParser, readQuestHistory, findPmcProfile, findLogsDir };

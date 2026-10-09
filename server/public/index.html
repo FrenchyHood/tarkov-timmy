@@ -64,6 +64,7 @@
         <div id="map"></div>
         <div id="map-status" class="map-status" hidden></div>
         <div class="map-hint">Right-click / long-press the map to ping</div>
+        <div id="ov-grip" class="ov-grip overlay-only" title="Drag to resize"></div>
       </div>
 
       <aside id="panel">
@@ -71,11 +72,13 @@
           <button data-tab="extracts" class="active">Extracts</button>
           <button data-tab="bosses">Bosses</button>
           <button data-tab="quests">Quests</button>
+          <button data-tab="route">Route</button>
           <button data-tab="squad">Squad</button>
         </nav>
         <div class="tab-body" id="tab-extracts"></div>
         <div class="tab-body" id="tab-bosses" hidden></div>
         <div class="tab-body" id="tab-quests" hidden></div>
+        <div class="tab-body" id="tab-route" hidden></div>
         <div class="tab-body" id="tab-squad" hidden></div>
         <footer class="credits">Map data &amp; art: <a href="https://tarkov.dev" target="_blank" rel="noopener">tarkov.dev</a> (MIT)</footer>
       </aside>

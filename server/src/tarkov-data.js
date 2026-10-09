@@ -12,6 +12,15 @@ async function getJson(path) {
   return body.data;
 }
 
+// Rough "worth a detour" score per container type (1 = filler, 5 = always check). Unlisted types are skipped.
+const LOOT_VALUE = {
+  safe: 5, "bank-safe": 5, "shturmans-stash": 5, "pc-block": 4, "technical-supply-crate": 4, "buried-barrel-cache": 3, "ground-cache": 3,
+  medcase: 3, "medical-supply-crate": 3, "weapon-box": 3, toolbox: 3, "plastic-suitcase": 3, "lab-technician-body": 3,
+  jacket: 2, "duffle-bag": 2, "dead-scav": 2, "scav-body": 2, "pmc-body": 2, "civilian-body": 2, "ration-supply-crate": 2,
+  "grenade-box": 2, "cash-register": 2, "bank-cash-register": 2,
+  medbag: 1, "wooden-ammo-box": 1, drawer: 1, "wooden-crate": 1,
+};
+
 const pos = (p) => (p ? { x: p.x, y: p.y, z: p.z } : null);
 const outline = (o) => (Array.isArray(o) && o.length ? o.map(pos) : null);
 
@@ -78,6 +87,12 @@ export async function loadMaps() {
       switches: (m.switches ?? []).map((s) => ({ id: s.id, name: t(s.name), switchType: s.switchType, position: pos(s.position) })),
       locks: (m.locks ?? []).map((l) => ({ lockType: l.lockType, needsPower: l.needsPower, key: item(l.key), position: pos(l.position) })),
       btrStops: (m.btrStops ?? []).map((s) => ({ name: t(s.name), x: s.x, y: s.y, z: s.z })),
+      // Loot containers, tagged with how worthwhile they usually are (used for the suggested route).
+      loot: (m.lootContainers ?? []).flatMap((c) => {
+        const type = data.lootContainers?.[c.lootContainer];
+        const value = LOOT_VALUE[type?.normalizedName];
+        return value && c.position ? [{ kind: type.normalizedName, name: t(type.name), value, position: pos(c.position) }] : [];
+      }),
     };
   });
   if (!maps.length) throw new Error("json.tarkov.dev returned no maps");

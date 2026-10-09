@@ -24,6 +24,12 @@ const desktop = window.timmyDesktop ?? null;
 const OVERLAY = new URLSearchParams(location.search).has("overlay");
 // Only one window should beep/notify: the browser tab, or the desktop app's main window.
 const ALERTS = !desktop || desktop.role === "main";
+const FOLLOW_KEY = OVERLAY ? "follow:overlay" : "follow:main";
+// Map layers and whether they start switched on (the user's choices override these).
+const LAYER_DEFAULTS = {
+  labels: true, extracts: true, transits: true, bosses: true, hazards: true, quests: true, route: true,
+  spawns: false, locks: false, switches: false, btr: false, loot: false,
+};
 
 function ago(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -58,6 +64,11 @@ const app = {
   tab: store.get("tab", "extracts"),
   questFilter: "",
   questThisMapOnly: true,
+  follow: store.get(FOLLOW_KEY, true),
+  layerOn: { ...LAYER_DEFAULTS, ...store.get("layers", {}) },
+  hiddenQuestPlayers: new Set(store.get("hiddenQuestPlayers", [])),
+  route: { on: true, squad: true, stops: 6, minValue: 3, ...store.get("route", {}) },
+  trail: [],             // my positions this raid (for skipping route stops I've already visited)
   local: null,           // desktop companion status
   seenPings: null,
   timerAlerts: new Set(),
@@ -249,7 +260,9 @@ function onServerState() {
   updateTimer();
   alertNewPings();
   autoFloor();
-  if (OVERLAY) followMe();
+  trackTrail();
+  drawRoute();
+  followMe();
 }
 
 // ---------- alerts ----------
@@ -300,12 +313,91 @@ function timerAlert(raidKey, left) {
   }
 }
 
-function followMe() {
+// ---------- follow me ----------
+// While following, the map keeps my pin centred at whatever zoom I picked (also after a refresh).
+// Panning by hand or jumping to something from the side panel pauses it; the ◎ button resumes.
+
+function myPosHere() {
   const p = me()?.pos;
-  if (!p || !app.leaflet || p.map !== currentMap()?.nameId) return;
-  if (p.ts === app.lastFollowTs) return;
+  return p && p.map === currentMap()?.nameId ? p : null;
+}
+
+function followMe(force) {
+  if (!app.follow || !app.leaflet) return;
+  const p = myPosHere();
+  if (!p || (!force && p.ts === app.lastFollowTs)) return;
   app.lastFollowTs = p.ts;
-  app.leaflet.setView(pos(p), Math.max(app.leaflet.getZoom(), 3));
+  app.leaflet.setView(pos(p), app.leaflet.getZoom(), { animate: !force });
+}
+
+function setFollow(on) {
+  app.follow = on;
+  store.set(FOLLOW_KEY, on);
+  app.followBtn?.classList.toggle("on", on);
+  if (on) followMe(true);
+}
+
+const FollowControl = L.Control.extend({
+  options: { position: "topleft" },
+  onAdd() {
+    const bar = L.DomUtil.create("div", "leaflet-bar follow-control");
+    const a = L.DomUtil.create("a", app.follow ? "on" : "", bar);
+    a.href = "#";
+    a.title = "Follow me: keep my pin centred";
+    a.innerHTML = "◎";
+    L.DomEvent.on(a, "click", (e) => { L.DomEvent.stop(e); setFollow(!app.follow); });
+    L.DomEvent.disableClickPropagation(bar);
+    app.followBtn = a;
+    return bar;
+  },
+});
+
+// ---------- main window ⇄ overlay sync ----------
+// Both windows share localStorage, and the browser fires "storage" in the *other* window when one changes
+// it. So map, floor, layers, route options and hidden quest players stay identical in both, instantly.
+// Zoom and Follow stay per window (the overlay is much smaller).
+
+function applyFloorChoice(value) {
+  app.floorMode = value === "auto" ? "auto" : "manual";
+  $("#floor-select").value = value;
+  if (app.floorMode === "auto") autoFloor();
+  else setFloor(value);
+}
+
+function onSharedSettingChanged(e) {
+  const val = (() => { try { return JSON.parse(e.newValue); } catch { return null; } })();
+  if (val === null) return;
+  switch (e.key) {
+    case "layers":
+      app.layerOn = { ...LAYER_DEFAULTS, ...val };
+      app.applyingView = true; // don't echo these back
+      for (const [key, on] of Object.entries(app.layerOn)) {
+        const g = app.layers[key];
+        if (!g || !app.leaflet) continue;
+        if (on && !app.leaflet.hasLayer(g)) g.addTo(app.leaflet);
+        if (!on && app.leaflet.hasLayer(g)) g.remove();
+      }
+      app.applyingView = false;
+      break;
+    case "mapNameId": {
+      const target = app.maps.find((m) => m.nameId === val);
+      if (target && target.id !== app.mapId) selectMap(target.id);
+      break;
+    }
+    case "floorChoice":
+      applyFloorChoice(val.value);
+      break;
+    case "route":
+      app.route = { ...app.route, ...val };
+      drawRoute();
+      break;
+    case "hiddenQuestPlayers":
+      app.hiddenQuestPlayers = new Set(val);
+      drawQuests();
+      drawRoute();
+      if (app.tab === "quests") renderQuestsTab();
+      break;
+  }
 }
 
 // ---------- UI wiring ----------
@@ -313,10 +405,10 @@ function followMe() {
 function wireUi() {
   $("#map-select").onchange = (e) => { app.followMe = false; selectMap(e.target.value); };
   $("#floor-select").onchange = (e) => {
-    app.floorMode = e.target.value === "auto" ? "auto" : "manual";
-    if (app.floorMode === "auto") autoFloor();
-    else setFloor(e.target.value);
+    applyFloorChoice(e.target.value);
+    store.set("floorChoice", { value: e.target.value, at: Date.now() }); // mirrored to the other window
   };
+  window.addEventListener("storage", onSharedSettingChanged);
   for (const b of document.querySelectorAll("#faction-toggle button")) {
     b.onclick = () => send({ t: "faction", name: app.name, faction: b.dataset.faction });
   }
@@ -329,6 +421,23 @@ function wireUi() {
   };
   $("#panel-toggle").onclick = () => { $("#panel").classList.toggle("collapsed"); app.leaflet?.invalidateSize(); };
   $("#overlay-btn").onclick = () => desktop?.toggleOverlay();
+  if (OVERLAY && desktop?.resizeOverlay) {
+    // Corner grip: resize the overlay window by dragging (edges work too).
+    const grip = $("#ov-grip");
+    grip.onpointerdown = (e) => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      const start = { x: e.screenX, y: e.screenY, w: window.outerWidth, h: window.outerHeight };
+      grip.onpointermove = (m) => desktop.resizeOverlay(start.w + m.screenX - start.x, start.h + m.screenY - start.y);
+      grip.onpointerup = () => {
+        grip.onpointermove = grip.onpointerup = null;
+        desktop.resizeOverlayDone();
+        app.leaflet?.invalidateSize();
+        followMe(true);
+      };
+    };
+    window.addEventListener("resize", () => app.leaflet?.invalidateSize());
+  }
   if (OVERLAY && desktop) {
     desktop.identity().then((id) => {
       if (id?.hotkeys) $("#ov-hint").textContent = `${id.hotkeys.overlay} hide · ${id.hotkeys.clickThrough} click-through`;
@@ -353,12 +462,12 @@ function setTab(tab) {
   app.tab = tab;
   store.set("tab", tab);
   for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("active", b.dataset.tab === tab);
-  for (const t of ["extracts", "bosses", "quests", "squad"]) $(`#tab-${t}`).hidden = t !== tab;
+  for (const t of ["extracts", "bosses", "quests", "route", "squad"]) $(`#tab-${t}`).hidden = t !== tab;
   renderActiveTab();
 }
 
 function renderActiveTab() {
-  ({ extracts: renderExtractsTab, bosses: renderBossesTab, quests: renderQuestsTab, squad: renderSquadTab })[app.tab]?.();
+  ({ extracts: renderExtractsTab, bosses: renderBossesTab, quests: renderQuestsTab, route: renderRouteTab, squad: renderSquadTab })[app.tab]?.();
 }
 
 function renderAll() {
@@ -438,6 +547,15 @@ function selectMap(id) {
   });
   app.leaflet = lm;
   lm.fitBounds(bounds);
+  // Come back to my pin at my last zoom for this map (so a refresh lands where I was looking).
+  const zoomKey = `zoom:${OVERLAY ? "overlay" : "main"}:${map.nameId}`;
+  const savedZoom = store.get(zoomKey, null);
+  const here = myPosHere();
+  if (app.follow && here) lm.setView(pos(here), savedZoom ?? Math.max(lm.getZoom(), 3), { animate: false });
+  app.lastFollowTs = here?.ts;
+  lm.on("zoomend", () => store.set(zoomKey, lm.getZoom()));
+  lm.on("dragstart", () => app.follow && setFollow(false));
+  new FollowControl().addTo(lm);
 
   // Base art: SVG (most maps) or tiles (Labs etc).
   app.svgRoot = null;
@@ -463,19 +581,29 @@ function selectMap(id) {
   app.floor = "";
   autoFloor();
 
-  // Overlay groups + toggle control
-  const L_ = (on) => { const g = L.layerGroup(); if (on) g.addTo(lm); return g; };
-  app.layers = {
-    labels: L_(true), extracts: L_(true), transits: L_(true), bosses: L_(true), hazards: L_(true),
-    quests: L_(true), spawns: L_(false), locks: L_(false), switches: L_(false), btr: L_(false),
-    pings: L_(true), players: L_(true),
-  };
+  // Overlay groups + toggle control. Which ones are on is remembered and shared with the other window.
+  app.layers = {};
+  for (const key of Object.keys(LAYER_DEFAULTS)) {
+    app.layers[key] = L.layerGroup();
+    if (app.layerOn[key]) app.layers[key].addTo(lm);
+  }
+  app.layers.pings = L.layerGroup().addTo(lm);
+  app.layers.players = L.layerGroup().addTo(lm);
+  lm.on("overlayadd overlayremove", (e) => {
+    if (app.applyingView) return;
+    const key = Object.keys(app.layers).find((k) => app.layers[k] === e.layer);
+    if (!key) return;
+    app.layerOn[key] = e.type === "overlayadd";
+    store.set("layers", app.layerOn);
+  });
   L.control.layers(null, {
     "Extracts": app.layers.extracts,
     "Transits": app.layers.transits,
     "Bosses": app.layers.bosses,
     "Danger zones": app.layers.hazards,
     "Quest objectives": app.layers.quests,
+    "Suggested route": app.layers.route,
+    "Loot containers": app.layers.loot,
     "PMC spawns": app.layers.spawns,
     "Locked doors": app.layers.locks,
     "Switches / levers": app.layers.switches,
@@ -488,8 +616,9 @@ function selectMap(id) {
   drawStatic(map, cal);
   drawExtracts();
   drawQuests();
-  drawPlayers(true);
+  drawPlayers();
   drawPings();
+  drawRoute();
   renderActiveTab();
   updateTimer();
 }
@@ -607,6 +736,12 @@ function drawStatic(map, cal) {
       .addTo(switches);
   }
 
+  for (const l of map.loot ?? []) {
+    if (l.value < 2) continue;
+    L.circleMarker(pos(l.position), { radius: 2 + l.value, color: "#0d0f12", weight: 1, fillColor: LOOT_COLOR[l.value], fillOpacity: 0.85 })
+      .bindTooltip(`${l.name} ${"★".repeat(l.value)}`).addTo(app.layers.loot);
+  }
+
   for (const s of map.btrStops ?? []) {
     L.marker(pos(s), { icon: pinIcon({ color: "#9aa0a6", label: `BTR: ${s.name}` }) }).addTo(btr);
   }
@@ -714,6 +849,7 @@ function renderExtractsTab() {
 
 function flyTo(p, zoom) {
   if (!p || !app.leaflet) return;
+  if (app.follow) setFollow(false); // looking somewhere else on purpose
   app.leaflet.flyTo(pos(p), Math.max(app.leaflet.getZoom(), zoom ?? 3), { duration: 0.6 });
   if (window.innerWidth <= 760) { $("#panel").classList.add("collapsed"); setTimeout(() => app.leaflet.invalidateSize(), 50); }
 }
@@ -774,6 +910,8 @@ function renderQuestsTab() {
 
   // Squadmates' quests (read-only) so you can help each other.
   const others = Object.entries(app.server?.players ?? {}).filter(([k, p]) => k !== app.name.toLowerCase() && p.quests?.length);
+  // Everyone with quest markers on this map, for the show/hide legend.
+  const legend = Object.entries(app.server?.players ?? {}).filter(([k]) => questTargets(map, [k]).length);
 
   const prevScroll = el.scrollTop;
   const hadFocus = document.activeElement?.id === "quest-search";
@@ -781,6 +919,9 @@ function renderQuestsTab() {
     <div class="hint">${me()?.questsAuto
       ? "Your quests are <b>ticked automatically</b> from the game: accepted ones appear, finished ones drop off. You can still tick extras by hand."
       : "Tick your active quests, or let the Tarkov Timmy app detect them from the game. Their objectives show on the map for the whole squad."}</div>
+    ${legend.length ? `<div class="section-title">Showing on the map</div><div class="legend">${legend.map(([k, p]) => `
+      <label class="chip" style="--c:${playerColor(k)}"><input type="checkbox" data-legend="${esc(k)}" ${app.hiddenQuestPlayers.has(k) ? "" : "checked"} />
+        <span class="dot" style="background:${playerColor(k)}"></span>${esc(p.name)}${k === app.name.toLowerCase() ? " (you)" : ""}</label>`).join("")}</div>` : ""}
     <input id="quest-search" class="search" placeholder="Search quests or traders" value="${esc(app.questFilter)}" />
     <label class="row" style="padding:2px 6px"><input type="checkbox" id="quest-mapfilter" ${app.questThisMapOnly ? "checked" : ""}/><span class="sub">Only quests with objectives on ${esc(map?.name ?? "this map")}</span></label>
     ${others.map(([k, p]) => {
@@ -804,6 +945,14 @@ function renderQuestsTab() {
   search.oninput = () => { app.questFilter = search.value; renderQuestsTab(); };
   if (hadFocus) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
   $("#quest-mapfilter").onchange = (e) => { app.questThisMapOnly = e.target.checked; renderQuestsTab(); };
+  for (const box of el.querySelectorAll("[data-legend]")) {
+    box.onchange = () => {
+      box.checked ? app.hiddenQuestPlayers.delete(box.dataset.legend) : app.hiddenQuestPlayers.add(box.dataset.legend);
+      store.set("hiddenQuestPlayers", [...app.hiddenQuestPlayers]);
+      drawQuests();
+      drawRoute();
+    };
+  }
   for (const row of el.querySelectorAll("[data-task]")) {
     row.querySelector("input").onchange = (e) => {
       const ids = new Set(me()?.quests ?? []);
@@ -813,34 +962,214 @@ function renderQuestsTab() {
   }
 }
 
+// Every quest objective on this map that has a location, for the given players.
+// Each has one or more candidate points (quest items can spawn in several places).
+function questTargets(map, playerKeys) {
+  const out = [];
+  if (!map || !app.tasks.length) return out;
+  for (const key of playerKeys) {
+    const player = app.server?.players?.[key];
+    for (const id of player?.quests ?? []) {
+      const task = app.tasks.find((t) => t.id === id);
+      if (!task) continue;
+      for (const o of task.objectives) {
+        const zones = (o.zones ?? []).filter((z) => z.map?.id === map.id && z.position);
+        const items = (o.possibleLocations ?? []).filter((l) => l.map?.id === map.id).flatMap((l) => l.positions ?? []);
+        if (!zones.length && !items.length) continue;
+        out.push({ key, player, task, objective: o, zones, points: [...zones.map((z) => z.position), ...items], itemName: items.length ? o.questItem?.name : null });
+      }
+    }
+  }
+  return out;
+}
+
 function drawQuests() {
   const map = currentMap();
   const group = app.layers.quests;
   if (!map || !group) return;
   group.clearLayers();
-  if (!app.tasks.length) return;
-  for (const [key, player] of Object.entries(app.server?.players ?? {})) {
-    const color = playerColor(key);
-    for (const id of player.quests ?? []) {
-      const task = app.tasks.find((t) => t.id === id);
-      if (!task) continue;
-      for (const o of task.objectives) {
-        const label = `${task.name}`;
-        const popup = `<h4>${esc(task.name)}</h4><div>${esc(o.description)}</div><div class="muted">${esc(player.name)} · ${esc(task.trader.name)}</div>`;
-        for (const z of o.zones ?? []) {
-          if (z.map?.id !== map.id || !z.position) continue;
-          outline(z.outline, color, group, { dashArray: "2 4" });
-          L.marker(pos(z.position), { icon: pinIcon({ color, cls: "mk-quest", label }) }).bindPopup(popup).addTo(group);
-        }
-        for (const loc of o.possibleLocations ?? []) {
-          if (loc.map?.id !== map.id) continue;
-          for (const p of loc.positions ?? []) {
-            L.marker(pos(p), { icon: pinIcon({ color, cls: "mk-quest", label: o.questItem?.name ?? label }) }).bindPopup(popup).addTo(group);
-          }
+  const keys = Object.keys(app.server?.players ?? {}).filter((k) => !app.hiddenQuestPlayers.has(k));
+  const targets = questTargets(map, keys);
+  // With more than one person's quests showing, say whose each marker is.
+  const named = new Set(targets.map((t) => t.key)).size > 1;
+  for (const t of targets) {
+    const color = playerColor(t.key);
+    const label = `${named ? `${t.player.name}: ` : ""}${t.itemName ?? t.task.name}`;
+    const popup = `<h4>${esc(t.task.name)}</h4><div>${esc(t.objective.description)}</div><div class="muted" style="color:${color}">${esc(t.player.name)} · ${esc(t.task.trader.name)}</div>`;
+    for (const z of t.zones) outline(z.outline, color, group, { dashArray: "2 4" });
+    for (const p of t.points) L.marker(pos(p), { icon: pinIcon({ color, cls: "mk-quest", label }) }).bindPopup(popup).addTo(group);
+  }
+}
+
+// ---------- suggested route ----------
+// Plans the order to visit things, not a walking path: there's no walkable-area data for Tarkov, so legs
+// are straight lines. From my last position: squad quest objectives (nearest first, then 2-opt to remove
+// backtracking), plus the loot containers worth the least detour, ending at the extract we ticked.
+
+const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const VISITED_M = 12;     // a stop counts as done once I've screenshotted within this many metres of it
+const MAX_DETOUR_M = 150; // never add loot that costs more extra walking than this
+const LOOT_COLOR = { 5: "#ffd166", 4: "#f4a259", 3: "#e4e1d8", 2: "#9aa0a6", 1: "#5c6168" };
+
+// My positions this raid, so route stops I've already been to drop off.
+function trackTrail() {
+  const raid = me()?.raid;
+  if (raid && raid.state !== app.lastRaidState && (raid.state === "matching" || raid.state === "loading")) app.trail = [];
+  app.lastRaidState = raid?.state;
+  const p = me()?.pos;
+  if (p && p.source === "screenshot" && p.ts !== app.trail.at(-1)?.ts) app.trail.push({ x: p.x, z: p.z, map: p.map, ts: p.ts });
+}
+function visited(p, map) {
+  return app.trail.some((t) => t.map === map.nameId && dist(t, p) < VISITED_M);
+}
+
+// Reverse stretches of the stop order while that shortens the trip (classic 2-opt).
+function twoOpt(start, stops, end) {
+  const at = (i) => (i < 0 ? start : i >= stops.length ? end : stops[i].at);
+  const leg = (a, b) => (a && b ? dist(a, b) : 0);
+  for (let pass = 0, improved = true; improved && pass < 50; pass++) {
+    improved = false;
+    for (let i = 0; i < stops.length - 1; i++) {
+      for (let k = i + 1; k < stops.length; k++) {
+        const [a, b, c, d] = [at(i - 1), at(i), at(k), at(k + 1)];
+        if (leg(a, c) + leg(b, d) + 0.01 < leg(a, b) + leg(c, d)) {
+          stops.splice(i, k - i + 1, ...stops.slice(i, k + 1).reverse());
+          improved = true;
         }
       }
     }
   }
+}
+
+function computeRoute() {
+  const map = currentMap();
+  if (!map || !app.route.on) return null;
+  const start = myPosHere();
+  const keys = app.route.squad
+    ? Object.keys(app.server?.players ?? {}).filter((k) => !app.hiddenQuestPlayers.has(k))
+    : [app.name.toLowerCase()];
+  const left = questTargets(map, keys)
+    .map((t) => ({ ...t, points: t.points.filter((p) => !visited(p, map)) }))
+    .filter((t) => t.points.length);
+  if (!start && !left.length) return { start, stops: [], end: null, length: 0, map };
+
+  // 1. Quest objectives, nearest first (using whichever candidate point is closest).
+  const stops = [];
+  let cur = start;
+  while (left.length) {
+    let best = null;
+    left.forEach((o, i) => o.points.forEach((p) => {
+      const d = cur ? dist(cur, p) : 0;
+      if (!best || d < best.d) best = { i, p, d };
+    }));
+    const [o] = left.splice(best.i, 1);
+    // Objectives at the same spot (often shared between squadmates' quests) become one stop.
+    const same = stops.find((s) => dist(s.at, best.p) < 10);
+    if (same) same.targets.push(o);
+    else stops.push({ type: "quest", targets: [o], at: best.p });
+    cur = best.p;
+  }
+
+  // 2. End at the ticked extract closest to where the quests leave us.
+  const chosen = chosenExtracts();
+  const last = stops.at(-1)?.at ?? start;
+  const end = (map.extracts ?? []).filter((e) => chosen.has(e.id) && e.position)
+    .sort((a, b) => dist(last, a.position) - dist(last, b.position))[0] ?? null;
+  twoOpt(start, stops, end?.position);
+
+  // 3. Loot: repeatedly add the container with the best value per metre of detour.
+  const candidates = (map.loot ?? []).filter((l) => l.value >= app.route.minValue && !visited(l.position, map));
+  for (let n = 0; n < app.route.stops && candidates.length; n++) {
+    const pts = [start, ...stops.map((s) => s.at), end?.position].filter(Boolean);
+    let best = null;
+    candidates.forEach((c, ci) => {
+      let cost = Infinity, insertAt = pts.length;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const d = dist(pts[i], c.position) + dist(c.position, pts[i + 1]) - dist(pts[i], pts[i + 1]);
+        if (d < cost) [cost, insertAt] = [d, i + 1];
+      }
+      if (!end && pts.length) {
+        const d = dist(pts.at(-1), c.position); // or tack it on at the end
+        if (d < cost) [cost, insertAt] = [d, pts.length];
+      }
+      if (cost > MAX_DETOUR_M) return;
+      const score = c.value / (cost + 25);
+      if (!best || score > best.score) best = { ci, insertAt, score };
+    });
+    if (!best) break;
+    const [c] = candidates.splice(best.ci, 1);
+    stops.splice(Math.min(best.insertAt - (start ? 1 : 0), stops.length), 0, { type: "loot", loot: c, at: c.position });
+  }
+
+  const pts = [start, ...stops.map((s) => s.at), end?.position].filter(Boolean);
+  const length = pts.slice(1).reduce((sum, p, i) => sum + dist(pts[i], p), 0);
+  return { start, stops, end, length, map };
+}
+
+// Labels for a route stop (a quest stop can cover several objectives at one spot).
+const stopColor = (s) => (s.type === "quest" ? playerColor(s.targets[0].key) : LOOT_COLOR[s.loot.value]);
+const stopTitle = (s) => (s.type === "quest" ? [...new Set(s.targets.map((t) => t.task.name))].join(" + ") : s.loot.name);
+const stopDetails = (s) => (s.type === "quest"
+  ? s.targets.map((t) => `${t.player.name}: ${t.objective.description}`)
+  : [`Loot ${"★".repeat(s.loot.value)}`]);
+
+function stepIcon(n, color) {
+  return L.divIcon({ className: "", iconSize: [0, 0], html: `<div class="mk-step" style="--c:${color}">${n}</div>` });
+}
+
+function drawRoute() {
+  const group = app.layers.route;
+  if (!group) return;
+  group.clearLayers();
+  const r = (app.lastRoute = computeRoute());
+  if (app.tab === "route") renderRouteTab();
+  if (!r || !r.stops.length && !r.end) return;
+  const pts = [r.start, ...r.stops.map((s) => s.at), r.end?.position].filter(Boolean);
+  L.polyline(pts.map(pos), { color: "#d6b25e", weight: 3, opacity: 0.85, dashArray: "8 7", interactive: false }).addTo(group);
+  r.stops.forEach((s, i) => {
+    L.marker(pos(s.at), { icon: stepIcon(i + 1, stopColor(s)), zIndexOffset: 1200 })
+      .bindPopup(`<h4>${i + 1}. ${esc(stopTitle(s))}</h4>${stopDetails(s).map((d) => `<div class="muted">${esc(d)}</div>`).join("")}`).addTo(group);
+  });
+}
+
+function renderRouteTab() {
+  const el = $("#tab-route");
+  const r = app.lastRoute;
+  const o = app.route;
+  const map = currentMap();
+  const opt = (v, label, cur) => `<option value="${v}" ${String(cur) === String(v) ? "selected" : ""}>${label}</option>`;
+  const start = myPosHere();
+  let prev = r?.start;
+  el.innerHTML = `
+    <div class="hint">The order to hit things, drawn as straight lines: it doesn't know about walls, water or fences, so pick your own way between stops.</div>
+    <label class="row" style="padding:2px 6px"><input type="checkbox" id="route-on" ${o.on ? "checked" : ""}/><span class="main"><div class="title">Show suggested route</div></span></label>
+    <label class="row" style="padding:2px 6px"><input type="checkbox" id="route-squad" ${o.squad ? "checked" : ""}/><span class="sub">Include my squad's quest objectives</span></label>
+    <div class="route-opts">
+      <label>Loot stops <select id="route-stops">${[0, 3, 6, 10].map((v) => opt(v, v === 0 ? "None" : v, o.stops)).join("")}</select></label>
+      <label>Loot worth <select id="route-min">${opt(4, "Best only", o.minValue)}${opt(3, "Good+", o.minValue)}${opt(2, "Decent+", o.minValue)}${opt(1, "Anything", o.minValue)}</select></label>
+    </div>
+    ${!o.on || !map ? "" : `
+      <div class="section-title">Plan · ${esc(map.name)}${r?.length ? ` · ~${Math.round(r.length)} m` : ""}</div>
+      <div class="sub" style="margin:0 6px 6px">${start ? `Starting from your last screenshot (${ago(serverNow() - start.ts)}).` : "Press your screenshot key in raid so the route starts from where you are."}</div>
+      ${(r?.stops ?? []).map((s, i) => {
+        const d = prev ? Math.round(dist(prev, s.at)) : null;
+        prev = s.at;
+        return `<div class="row" data-step="${i}"><span class="mk-step static" style="--c:${stopColor(s)}">${i + 1}</span>
+          <span class="main"><div class="title">${esc(stopTitle(s))}${d !== null ? ` <span class="pct" style="float:right">${d} m</span>` : ""}</div>
+          ${stopDetails(s).map((x) => `<div class="sub">${esc(x)}</div>`).join("")}</span></div>`;
+      }).join("") || `<div class="muted" style="margin:6px">${start ? "Nothing worth a detour nearby. Try more loot stops or a lower loot bar." : ""}</div>`}
+      ${r?.end ? `<div class="row" data-end="1"><span class="mk-step static" style="--c:var(--pmc)">⇥</span><span class="main"><div class="title">Extract: ${esc(r.end.name)}</div>
+        <div class="sub">${prev ? `${Math.round(dist(prev, r.end.position))} m` : ""}</div></span></div>`
+        : `<div class="hint" style="margin-top:8px">Tick your extract in the <b>Extracts</b> tab and the route will end there.</div>`}
+    `}
+  `;
+  const save = () => { store.set("route", app.route); drawRoute(); };
+  $("#route-on").onchange = (e) => { o.on = e.target.checked; save(); };
+  $("#route-squad").onchange = (e) => { o.squad = e.target.checked; save(); };
+  $("#route-stops").onchange = (e) => { o.stops = Number(e.target.value); save(); };
+  $("#route-min").onchange = (e) => { o.minValue = Number(e.target.value); save(); };
+  for (const row of el.querySelectorAll("[data-step]")) row.onclick = () => flyTo(r.stops[row.dataset.step].at);
+  el.querySelector("[data-end]")?.addEventListener("click", () => flyTo(r.end.position));
 }
 
 // ---------- players ----------
@@ -858,7 +1187,7 @@ function playerIcon(color, yaw, label, stale) {
   });
 }
 
-function drawPlayers(recenter) {
+function drawPlayers() {
   const map = currentMap();
   const group = app.layers.players;
   if (!map || !group) return;
@@ -868,7 +1197,6 @@ function drawPlayers(recenter) {
     const age = serverNow() - p.pos.ts;
     const label = `${p.name} · ${ago(age)}`;
     L.marker(pos(p.pos), { icon: playerIcon(playerColor(key), p.pos.yaw, label, age > 5 * 60 * 1000), zIndexOffset: 2000 }).addTo(group);
-    if (recenter && key === app.name.toLowerCase()) app.leaflet.setView(pos(p.pos), Math.max(app.leaflet.getZoom(), 2));
   }
 }
 

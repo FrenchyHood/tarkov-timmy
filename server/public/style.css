@@ -144,7 +144,7 @@ body.desktop .web-only { display: none; }
 @media (max-width: 760px) { .web-only { display: none; } }
 
 body.overlay { background: transparent; }
-body.overlay #room { border-radius: 12px; overflow: hidden; border: 1px solid rgba(214,178,94,.45); background: #0e1013; }
+body.overlay #room { overflow: hidden; border: 1px solid rgba(214,178,94,.45); background: #0e1013; }
 body.overlay .topbar { padding: 4px 8px; gap: 6px; flex-wrap: nowrap; -webkit-app-region: drag; cursor: move; user-select: none; }
 body.overlay .topbar > * { display: none; }
 body.overlay .topbar > .brand, body.overlay .topbar > .spacer, body.overlay .topbar > .overlay-only { display: flex; }
@@ -163,3 +163,21 @@ a.btn { text-decoration: none; display: inline-block; margin: 4px 4px 0 0; }
 .create .btn.primary { margin-top: 0; }
 .error-text { color: var(--boss); margin: 0; font-size: 13px; }
 .small-print { font-size: 12px; margin: 10px 0 0; }
+
+/* route, legend, follow */
+.mk-step { transform: translate(-50%, -50%); width: 20px; height: 20px; border-radius: 50%; background: var(--c); color: #111;
+  font: 700 11px/20px system-ui, sans-serif; text-align: center; border: 2px solid #0d0f12; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.mk-step.static { transform: none; display: inline-block; flex: none; margin-top: 1px; }
+.route-opts { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px; font-size: 12px; color: var(--muted); }
+.route-opts select { padding: 4px 6px; margin-left: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--c); font-size: 12px; cursor: pointer; }
+.chip input { accent-color: var(--c); margin: 0; }
+.chip .dot { margin-top: 0; }
+.follow-control a { font-size: 16px; line-height: 30px; }
+.follow-control a.on { color: var(--accent); background: #2a2516; }
+.tabs button { padding: 10px 2px; font-size: 13px; }
+body.overlay .overlay-only.ov-grip { display: block; }
+.ov-grip { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; z-index: 900; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 0 45%, rgba(214,178,94,.8) 45% 52%, transparent 52% 64%, rgba(214,178,94,.8) 64% 71%, transparent 71%); }
+body.overlay.click-through .ov-grip { display: none !important; }

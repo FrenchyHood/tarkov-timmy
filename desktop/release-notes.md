@@ -1,1 +1,4 @@
-- **Quests are now detected automatically.** Tarkov Timmy reads your game logs, so quests you accept show up on the map on their own and drop off when you finish or fail them. Your past quests are picked up too. You can still tick extras by hand.
+- **PMC vs Scav is detected automatically**, so the map shows the right extracts for each raid. (It learns which profile is your PMC from your raid history.)
+- **Overlay resizing fixed:** drag any edge, or the grip in the bottom-right corner. Position and size are remembered.
+- **Overlay mirrors the main map:** turning layers on or off, changing floor, map or route settings in one window updates the other instantly.
+- Map updates (already live): suggested route to quest objectives and loot, loot containers layer, Follow me (◎), and squadmates' quest markers labeled with their names.

@@ -4,6 +4,8 @@ import { LOADERS } from "./tarkov-data.js";
 const TARKOV_API = "https://api.tarkov.dev/graphql";
 const DATA_FRESH_MS = 60 * 60 * 1000; // refetch upstream at most hourly
 const UPSTREAM_RETRY_MS = 10 * 60 * 1000; // after a failed refresh, wait before trying upstream again
+// Bump when the converted data format changes, so cached copies are refetched right after a deploy.
+const DATA_VERSION = 3;
 const PING_TTL_MS = 3 * 60 * 1000;
 const ROOM_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const NAME_RE = /^[\p{L}\p{N} _.-]{1,24}$/u;
@@ -203,6 +205,8 @@ export class RaidRoom extends DurableObject {
       if (!state) return { ok: false, error: "invalid raid state" };
       const prev = player.raid;
       player.raid = { state, map: map ?? prev?.map ?? null, ts: now, startedAt: state === "started" ? (ev.startedAt ?? now) : prev?.startedAt ?? null };
+      // The app tells PMC from Scav raids by the start countdown; switch which extracts this player sees.
+      if (state === "started" && (ev.faction === "pmc" || ev.faction === "scav")) player.faction = ev.faction;
       if (state === "loading" && map) {
         // New raid: forget last raid's extract picks and stale positions on this map.
         delete this.state.extracts[map];
@@ -314,11 +318,11 @@ export class RaidRoom extends DurableObject {
   // Freshness order: cached copy (< 1 h old) → tarkov.dev JSON API → tarkov.dev GraphQL API →
   // older cached copy → daily snapshot committed to the GitHub repo. Any one of them is enough.
   async getDataset(name) {
-    const meta = (await this.ctx.storage.get(`data:${name}:meta`)) || null;
+    const meta = (await this.ctx.storage.get(`data:v${DATA_VERSION}:${name}:meta`)) || null;
     if (meta && Date.now() - meta.fetchedAt < DATA_FRESH_MS) return this.readDataset(name, meta);
 
     // While upstream is failing, don't retry it on every request.
-    const lastFail = (await this.ctx.storage.get(`data:${name}:lastFail`)) || 0;
+    const lastFail = (await this.ctx.storage.get(`data:v${DATA_VERSION}:${name}:lastFail`)) || 0;
     const errors = [];
     if (Date.now() - lastFail > UPSTREAM_RETRY_MS) {
       const sources = [
@@ -329,13 +333,13 @@ export class RaidRoom extends DurableObject {
         try {
           const body = await load();
           await this.writeDataset(name, body);
-          await this.ctx.storage.delete(`data:${name}:lastFail`);
+          await this.ctx.storage.delete(`data:v${DATA_VERSION}:${name}:lastFail`);
           return body;
         } catch (err) {
           errors.push(`${label}: ${err.message || err}`);
         }
       }
-      await this.ctx.storage.put(`data:${name}:lastFail`, Date.now());
+      await this.ctx.storage.put(`data:v${DATA_VERSION}:${name}:lastFail`, Date.now());
     }
 
     if (meta) return this.readDataset(name, meta); // stale beats nothing
@@ -356,13 +360,13 @@ export class RaidRoom extends DurableObject {
     const gz = await new Response(new Blob([body]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
     const CHUNK = 1_000_000;
     const chunks = Math.ceil(gz.byteLength / CHUNK);
-    const entries = { [`data:${name}:meta`]: { fetchedAt, chunks } };
-    for (let i = 0; i < chunks; i++) entries[`data:${name}:${i}`] = gz.slice(i * CHUNK, (i + 1) * CHUNK);
+    const entries = { [`data:v${DATA_VERSION}:${name}:meta`]: { fetchedAt, chunks } };
+    for (let i = 0; i < chunks; i++) entries[`data:v${DATA_VERSION}:${name}:${i}`] = gz.slice(i * CHUNK, (i + 1) * CHUNK);
     await this.ctx.storage.put(entries);
   }
 
   async readDataset(name, meta) {
-    const keys = Array.from({ length: meta.chunks }, (_, i) => `data:${name}:${i}`);
+    const keys = Array.from({ length: meta.chunks }, (_, i) => `data:v${DATA_VERSION}:${name}:${i}`);
     const got = await this.ctx.storage.get(keys);
     const blob = new Blob(keys.map((k) => got.get(k)));
     return new Response(blob.stream().pipeThrough(new DecompressionStream("gzip"))).text();

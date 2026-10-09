@@ -6,6 +6,7 @@ const { Companion, findLogsDir } = require("./companion");
 // The server comes from the invite link, so nothing account-specific is baked into the app.
 const DEFAULT_SERVER = "";
 const PROTOCOL = "tarkovtimmy";
+const OVERLAY_MIN = 220;
 const ICON = path.join(__dirname, "..", "assets", "icon.png");
 
 // Dev/testing only: isolated profile and window snapshots. Inert unless these env vars are set.
@@ -165,10 +166,12 @@ function showMain() {
 function createOverlay() {
   const area = screen.getPrimaryDisplay().workArea;
   const b = settings.overlay.bounds ?? { width: 420, height: 420, x: area.x + area.width - 440, y: area.y + 80 };
+  // Not `transparent`: Windows can't resize transparent frameless windows from their edges.
+  // The see-through look comes from setOpacity instead.
   overlayWin = new BrowserWindow({
-    ...b, minWidth: 220, minHeight: 220,
-    frame: false, transparent: true, resizable: true, skipTaskbar: true, show: false,
-    alwaysOnTop: true, hasShadow: false, focusable: true, icon: ICON,
+    ...b, minWidth: OVERLAY_MIN, minHeight: OVERLAY_MIN,
+    frame: false, resizable: true, thickFrame: true, skipTaskbar: true, show: false,
+    alwaysOnTop: true, focusable: true, backgroundColor: "#0e1013", icon: ICON,
     webPreferences: sitePrefs("overlay"),
   });
   overlayWin.setAlwaysOnTop(true, "screen-saver");
@@ -345,6 +348,19 @@ ipcMain.on("timmy:notify", (e, { title, body }) => {
 ipcMain.on("timmy:open-settings", (e) => fromSite(e) && openSettings());
 ipcMain.on("timmy:toggle-overlay", (e) => fromSite(e) && toggleOverlay());
 ipcMain.on("timmy:toggle-click-through", (e) => fromSite(e) && toggleClickThrough());
+// Resize grip in the overlay's corner: the page sends the size it wants while dragging.
+ipcMain.on("timmy:overlay-resize", (e, { width, height }) => {
+  if (!fromSite(e) || !overlayWin || e.sender !== overlayWin.webContents) return;
+  const area = screen.getDisplayMatching(overlayWin.getBounds()).workArea;
+  const w = Math.round(Math.min(area.width, Math.max(OVERLAY_MIN, Number(width) || 0)));
+  const h = Math.round(Math.min(area.height, Math.max(OVERLAY_MIN, Number(height) || 0)));
+  overlayWin.setSize(w, h);
+});
+ipcMain.on("timmy:overlay-resize-done", (e) => {
+  if (!fromSite(e) || !overlayWin) return;
+  settings.overlay.bounds = overlayWin.getBounds();
+  saveSettings();
+});
 ipcMain.on("timmy:set-opacity", (e, value) => {
   if (!fromSite(e) || !Number.isFinite(value)) return;
   settings.overlay.opacity = value;
