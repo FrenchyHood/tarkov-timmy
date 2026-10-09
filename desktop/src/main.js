@@ -420,6 +420,8 @@ app.whenReady().then(() => {
     if (settings.overlay.visible) createOverlay();
   }
   checkForUpdates(false);
+  // The app lives in the tray for days, so keep checking (it downloads quietly and installs on quit).
+  setInterval(() => checkForUpdates(false), 4 * 60 * 60 * 1000);
 });
 
 app.on("window-all-closed", () => {
