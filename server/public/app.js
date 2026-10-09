@@ -94,6 +94,10 @@ async function boot() {
     document.body.classList.add("desktop");
     const id = await desktop.identity();
     if (id?.name) app.name = id.name;
+    if (id?.version) {
+      $("#app-version").textContent = `v${id.version}`;
+      $("#app-version").hidden = false;
+    }
     desktop.onStatus((s) => { app.local = s; if (app.tab === "squad") renderSquadTab(); });
     desktop.status().then((s) => (app.local = s));
     desktop.onOverlay((s) => document.body.classList.toggle("click-through", s.clickThrough));
