@@ -1,7 +1,7 @@
 {
   "name": "tarkov-timmy",
   "productName": "Tarkov Timmy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Squad map, extracts, quests and overlay for Tarkov newcomers.",
   "author": "FrenchyHood",
   "license": "MIT",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win nsis",
-    "release": "electron-builder --win nsis --publish always"
+    "release": "electron-builder --win nsis --publish never && node scripts/publish-release.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"

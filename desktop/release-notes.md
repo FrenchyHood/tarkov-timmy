@@ -1,0 +1,1 @@
+- **Quests are now detected automatically.** Tarkov Timmy reads your game logs, so quests you accept show up on the map on their own and drop off when you finish or fail them. Your past quests are picked up too. You can still tick extras by hand.

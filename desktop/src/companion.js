@@ -77,6 +77,98 @@ function gameRunning() {
   });
 }
 
+// Quest progress from push-notification logs: a "ChatMessageReceived" line followed by a multi-line JSON
+// message whose type is 10 (started), 11 (failed) or 12 (finished) and whose templateId starts with the
+// quest id (same ids as tarkov.dev). Feed it lines in order; it returns { id, status } when a message completes.
+const LOG_LINE_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/;
+const QUEST_STATUS = { 10: "started", 11: "failed", 12: "finished" };
+const QUEST_ID_RE = /^[0-9a-f]{24}$/;
+
+class QuestParser {
+  constructor() {
+    this.buf = null;
+  }
+
+  feed(line) {
+    if (this.buf) {
+      if (LOG_LINE_RE.test(line)) {
+        const ev = this.flush();
+        return this.start(line) ?? ev;
+      }
+      this.buf.push(line);
+      // Messages end with a closing brace on its own line; parse as soon as the JSON is complete.
+      if (line.trim() === "}") {
+        const ev = this.flush(true);
+        if (ev !== undefined) return ev;
+      }
+      return null;
+    }
+    return this.start(line);
+  }
+
+  start(line) {
+    if (line.includes("Got notification | ChatMessageReceived")) this.buf = [];
+    return null;
+  }
+
+  // Returns the quest event, null if the message isn't a quest update, or undefined if the JSON is still incomplete.
+  flush(onlyIfComplete = false) {
+    let msg;
+    try {
+      msg = JSON.parse(this.buf.join("\n"))?.message;
+    } catch {
+      if (onlyIfComplete) return undefined;
+      this.buf = null;
+      return null;
+    }
+    this.buf = null;
+    const status = QUEST_STATUS[msg?.type];
+    const id = String(msg?.templateId ?? "").split(" ")[0];
+    return status && QUEST_ID_RE.test(id) ? { id, status } : null;
+  }
+}
+
+// Replays every Tarkov log session on disk (oldest first) to work out which quests are active.
+function readQuestHistory(logsDir) {
+  const active = new Set();
+  const ended = new Set();
+  let sessions = [];
+  try {
+    sessions = fs.readdirSync(logsDir).filter((n) => n.startsWith("log_")).sort(); // names start with the date
+  } catch {
+    return { active, ended };
+  }
+  for (const session of sessions) {
+    let files = [];
+    try {
+      files = fs.readdirSync(path.join(logsDir, session)).filter((f) => f.includes("push-notifications") && f.endsWith(".log")).sort();
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      let text;
+      try {
+        text = fs.readFileSync(path.join(logsDir, session, f), "utf8");
+      } catch {
+        continue;
+      }
+      const parser = new QuestParser();
+      for (const line of [...text.split("\n"), "0000-00-00 00:00:00"]) {
+        const ev = parser.feed(line);
+        if (!ev) continue;
+        if (ev.status === "started") {
+          active.add(ev.id);
+          ended.delete(ev.id);
+        } else {
+          active.delete(ev.id);
+          ended.add(ev.id);
+        }
+      }
+    }
+  }
+  return { active, ended };
+}
+
 class LogTailer {
   constructor(dir) {
     this.dir = dir;
@@ -104,7 +196,7 @@ class LogTailer {
     for (const f of fs.readdirSync(newest)) {
       const full = path.join(newest, f);
       if (f.endsWith(".log") && (f.includes("application") || f.includes("push-notifications")) && !this.files.has(full)) {
-        this.files.set(full, { offset: 0, partial: "" });
+        this.files.set(full, { offset: 0, partial: "", quests: f.includes("push-notifications") ? new QuestParser() : null });
       }
     }
   }
@@ -118,7 +210,7 @@ class LogTailer {
       } catch {
         continue;
       }
-      if (size < st.offset) Object.assign(st, { offset: 0, partial: "" });
+      if (size < st.offset) Object.assign(st, { offset: 0, partial: "", quests: st.quests && new QuestParser() });
       if (size === st.offset) continue;
       const buf = Buffer.alloc(size - st.offset);
       try {
@@ -134,6 +226,8 @@ class LogTailer {
       for (const line of lines) {
         const ev = this.handle(line);
         if (ev) events.push(ev);
+        const quest = st.quests?.feed(line);
+        if (quest) events.push({ type: "quest", ...quest });
       }
     }
     return events;
@@ -207,6 +301,10 @@ class Companion extends EventEmitter {
       if (this.tailer.raidState && this.tailer.raidState !== "ended") {
         this.send({ type: "raid", state: this.tailer.raidState, map: this.tailer.map });
       }
+      // Rebuild active quests from every log on disk, then keep them in sync live (see tick).
+      const history = readQuestHistory(logsDir);
+      this.setStatus({ questsDetected: history.active.size });
+      this.send({ type: "quests", active: [...history.active], ended: [...history.ended] });
     }
     this.send({ type: "heartbeat" });
 
@@ -232,6 +330,12 @@ class Companion extends EventEmitter {
   tick() {
     if (this.tailer) {
       for (const ev of this.tailer.poll()) {
+        if (ev.type === "quest") {
+          const started = ev.status === "started";
+          this.send({ type: "quests", active: started ? [ev.id] : [], ended: started ? [] : [ev.id] });
+          this.emit("quest", ev);
+          continue;
+        }
         this.setStatus({ raid: ev.state, map: ev.map });
         this.send(ev);
       }
@@ -294,4 +398,4 @@ class Companion extends EventEmitter {
   }
 }
 
-module.exports = { Companion, parseScreenshot, LogTailer, findLogsDir };
+module.exports = { Companion, parseScreenshot, LogTailer, QuestParser, readQuestHistory, findLogsDir };

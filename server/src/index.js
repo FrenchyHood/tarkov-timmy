@@ -208,6 +208,13 @@ export class RaidRoom extends DurableObject {
         delete this.state.extracts[map];
         if (player.pos?.map !== map) player.pos = null;
       }
+    } else if (ev.type === "quests") {
+      // From the game's logs: add quests started in game, drop ones finished/failed. Manual ticks are kept.
+      const ids = (a) => (Array.isArray(a) ? a.filter((i) => typeof i === "string" && /^[0-9a-f]{24}$/.test(i)).slice(0, 2000) : []);
+      const ended = new Set(ids(ev.ended));
+      const merged = new Set([...(player.quests ?? []), ...ids(ev.active)]);
+      player.quests = [...merged].filter((id) => !ended.has(id)).slice(0, 100);
+      player.questsAuto = now;
     } else if (ev.type === "heartbeat") {
       // nothing beyond companionSeen
     } else {

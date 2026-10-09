@@ -778,7 +778,9 @@ function renderQuestsTab() {
   const prevScroll = el.scrollTop;
   const hadFocus = document.activeElement?.id === "quest-search";
   el.innerHTML = `
-    <div class="hint">Tick your active quests. Their objectives show on the map for the whole squad.</div>
+    <div class="hint">${me()?.questsAuto
+      ? "Your quests are <b>ticked automatically</b> from the game: accepted ones appear, finished ones drop off. You can still tick extras by hand."
+      : "Tick your active quests, or let the Tarkov Timmy app detect them from the game. Their objectives show on the map for the whole squad."}</div>
     <input id="quest-search" class="search" placeholder="Search quests or traders" value="${esc(app.questFilter)}" />
     <label class="row" style="padding:2px 6px"><input type="checkbox" id="quest-mapfilter" ${app.questThisMapOnly ? "checked" : ""}/><span class="sub">Only quests with objectives on ${esc(map?.name ?? "this map")}</span></label>
     ${others.map(([k, p]) => {
