@@ -33,7 +33,7 @@ The overlay is a normal always-on-top window, not an injected one. It shows over
 - **Create a room** on the site, then click **Invite** to copy the link for your squad.
 - **Extracts:** in raid, double-tap **O**, then tick your extracts in the Extracts tab. The whole squad sees them highlighted, and the picks reset each raid.
 - **Pings:** right-click (or long-press on a phone) the map: Go here / Enemy / Loot / Danger / I'm here. Squadmates get a sound and a Windows notification.
-- **Quests:** tick your active quests; their objectives show on the map in your color for everyone.
+- **Quests:** detected automatically from Tarkov's logs (accepted quests appear, finished ones drop off), or tick them by hand. Objectives show on the map in your color for everyone.
 - **Raid timer** with sound alerts at 10 and 5 minutes left.
 - **Overlay** (app): **F9** shows/hides it, **F10** switches between clicking the map and clicking through to the game. Drag it by its top bar; size, position and opacity are remembered. Hotkeys can be changed in Settings.
 
@@ -44,12 +44,12 @@ cd desktop
 npm install
 npm start          # run from source
 npm run dist       # build dist/Tarkov-Timmy-Setup-<version>.exe
-npm run release    # build + publish a GitHub release (auto-update source); needs GH_TOKEN
+npm run release    # build, then publish ONE GitHub release with all files (needs the GitHub CLI signed in)
 ```
 
 - Settings live in `%APPDATA%\Tarkov Timmy\settings.json`.
 - Join links: `tarkovtimmy://join/<ROOM>?server=<site origin>` opens the app straight into a room. The site's Squad tab has an "Open this room in the app" button.
-- Releasing an update: bump `version` in `desktop/package.json`, run `npm run release`. Installed apps download it in the background and install on next quit.
+- Releasing an update: bump `version` in `desktop/package.json`, write `desktop/release-notes.md`, push, then `npm run release`. The script checks the installer, blockmap and `latest.yml` all uploaded. Installed apps download it in the background and install on next quit.
 - The installer is unsigned, so Windows SmartScreen shows "Windows protected your PC" on first run: click **More info → Run anyway**.
 
 ## Server
@@ -74,5 +74,4 @@ Workers free plan limits are 100k requests a day, and each WebSocket message cou
 ## Ideas for later
 
 - Discord Activity wrapper, so the map launches inside your voice channel.
-- Auto-track quests from the "quest started/finished" notifications in Tarkov's logs.
 - Position trail; auto-pick the floor from your height.
