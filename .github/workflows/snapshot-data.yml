@@ -1,0 +1,28 @@
+name: Snapshot map data
+
+# Keeps a backup of tarkov.dev's map and quest data in data/*.json, so the map still works
+# if tarkov.dev goes down. Only commits when the data actually changed.
+on:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Mondays 06:17 UTC (extracts only change with game patches)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node server/scripts/snapshot-data.mjs
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git diff --cached --quiet || git commit -m "Update map data snapshot"
+          git push
