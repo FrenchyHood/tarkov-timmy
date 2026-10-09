@@ -17,6 +17,14 @@ app.on("browser-window-created", (_e, win) => {
   win.webContents.on("did-finish-load", () => {
     setTimeout(async () => {
       if (win.isDestroyed()) return;
+      if (win === overlayWin && process.env.TIMMY_TEST_RESIZE) {
+        // Drive the corner grip's resize call from the page and record the result.
+        const before = win.getBounds();
+        await win.webContents.executeJavaScript("window.timmyDesktop.resizeOverlay(640, 520); window.timmyDesktop.resizeOverlayDone(); !!document.querySelector('#ov-grip') && getComputedStyle(document.querySelector('#ov-grip')).display");
+        await new Promise((r) => setTimeout(r, 500));
+        const grip = await win.webContents.executeJavaScript("getComputedStyle(document.querySelector('#ov-grip')).display");
+        fs.writeFileSync(path.join(SNAP_DIR, "resize.json"), JSON.stringify({ before, after: win.getBounds(), resizable: win.isResizable(), grip, saved: loadSettings().overlay.bounds }));
+      }
       const img = await win.webContents.capturePage();
       fs.writeFileSync(path.join(SNAP_DIR, `${win.getTitle().replace(/[^\w]+/g, "_")}-${win.id}.png`), img.toPNG());
     }, 3500);
@@ -268,6 +276,7 @@ function updateTray() {
 // ---------- hotkeys ----------
 
 function registerHotkeys() {
+  if (SNAP_DIR) return; // test runs must not grab F9/F10 from a real copy of the app
   globalShortcut.unregisterAll();
   const failed = [];
   const reg = (accel, fn) => {
