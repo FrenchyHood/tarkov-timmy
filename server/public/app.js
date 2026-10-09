@@ -51,6 +51,7 @@ const app = {
   followMe: true,        // switch map automatically when my raid map changes
   lastMyMap: null,
   floor: "",
+  floorMode: "auto",     // "auto" follows my screenshot height; "manual" once a floor is picked
   leaflet: null,
   layers: {},
   svgRoot: null,
@@ -154,7 +155,10 @@ function useMaps(maps) {
   fillMapSelect();
   const saved = store.get("mapNameId", null);
   const pick = (nameId) => app.maps.find((m) => m.nameId === nameId)?.id;
-  selectMap(pick(currentNameId) ?? pick(saved) ?? pick("bigmap") ?? app.maps[0]?.id);
+  // Prefer the map I'm in, then whatever was on screen, then the last map viewed.
+  const mine = app.followMe ? myMapNameId() : null;
+  if (mine) app.lastMyMap = mine;
+  selectMap(pick(mine) ?? pick(currentNameId) ?? pick(saved) ?? pick("bigmap") ?? app.maps[0]?.id);
 }
 
 async function loadData(attempt = 0) {
@@ -222,13 +226,18 @@ function send(obj) {
 }
 const serverNow = () => Date.now() + app.clockSkew;
 
-function onServerState() {
-  // Follow my raid onto its map.
+// The map I'm in (or last sent a position from), as a tarkov.dev nameId.
+function myMapNameId() {
   const mine = me();
-  const myMapNameId = mine?.raid && mine.raid.state !== "ended" ? mine.raid.map : mine?.pos?.map;
-  if (myMapNameId && myMapNameId !== app.lastMyMap) {
-    app.lastMyMap = myMapNameId;
-    const target = app.maps.find((m) => m.nameId === myMapNameId);
+  return mine?.raid && mine.raid.state !== "ended" && mine.raid.map ? mine.raid.map : mine?.pos?.map ?? null;
+}
+
+function onServerState() {
+  // Follow my raid onto its map (once the map list has loaded).
+  const mapNameId = myMapNameId();
+  if (mapNameId && mapNameId !== app.lastMyMap && app.maps.length) {
+    app.lastMyMap = mapNameId;
+    const target = app.maps.find((m) => m.nameId === mapNameId);
     if (target && app.followMe && target.id !== app.mapId) selectMap(target.id);
   }
   renderFaction();
@@ -239,6 +248,7 @@ function onServerState() {
   renderActiveTab();
   updateTimer();
   alertNewPings();
+  autoFloor();
   if (OVERLAY) followMe();
 }
 
@@ -302,7 +312,11 @@ function followMe() {
 
 function wireUi() {
   $("#map-select").onchange = (e) => { app.followMe = false; selectMap(e.target.value); };
-  $("#floor-select").onchange = (e) => setFloor(e.target.value);
+  $("#floor-select").onchange = (e) => {
+    app.floorMode = e.target.value === "auto" ? "auto" : "manual";
+    if (app.floorMode === "auto") autoFloor();
+    else setFloor(e.target.value);
+  };
   for (const b of document.querySelectorAll("#faction-toggle button")) {
     b.onclick = () => send({ t: "faction", name: app.name, faction: b.dataset.faction });
   }
@@ -443,8 +457,11 @@ function selectMap(id) {
   // Floors
   const floors = cal.layers ?? [];
   $("#floor-select").hidden = floors.length === 0;
-  $("#floor-select").innerHTML = `<option value="">Ground level</option>` + floors.map((f, i) => `<option value="${i}">${esc(f.name)}</option>`).join("");
+  $("#floor-select").innerHTML = `<option value="auto">Auto floor</option><option value="">Ground level</option>` +
+    floors.map((f, i) => `<option value="${i}">${esc(f.name)}</option>`).join("");
+  $("#floor-select").value = app.floorMode === "auto" ? "auto" : "";
   app.floor = "";
+  autoFloor();
 
   // Overlay groups + toggle control
   const L_ = (on) => { const g = L.layerGroup(); if (on) g.addTo(lm); return g; };
@@ -475,6 +492,31 @@ function selectMap(id) {
   drawPings();
   renderActiveTab();
   updateTimer();
+}
+
+// Which floor a game position is on, using tarkov.dev's floor extents: a height range,
+// optionally limited to areas given as [[x1, z1], [x2, z2]] corners. "" = ground level.
+function floorAt(cal, p) {
+  for (const [i, layer] of (cal?.layers ?? []).entries()) {
+    for (const ext of layer.extents ?? []) {
+      if (!(p.y >= ext.height[0] && p.y < ext.height[1])) continue;
+      if (!ext.bounds) return String(i);
+      const inside = ext.bounds.some(([[x1, z1], [x2, z2]]) =>
+        p.x >= Math.min(x1, x2) && p.x <= Math.max(x1, x2) && p.z >= Math.min(z1, z2) && p.z <= Math.max(z1, z2));
+      if (inside) return String(i);
+    }
+  }
+  return "";
+}
+
+// In auto mode, show the floor my last screenshot was taken on.
+function autoFloor() {
+  if (app.floorMode !== "auto") return;
+  const p = me()?.pos;
+  const map = currentMap();
+  if (!p || !map || p.map !== map.nameId || p.source !== "screenshot") return;
+  const floor = floorAt(calibrationFor(map), p);
+  if (floor !== app.floor) setFloor(floor);
 }
 
 function setFloor(value) {

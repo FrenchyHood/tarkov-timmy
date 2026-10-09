@@ -217,6 +217,9 @@ class ScreenshotWatcher:
 
     def poll(self):
         if not self.folder.is_dir():
+            # Tarkov creates the folder with the first screenshot, which must count as new.
+            if self.seen is None:
+                self.seen = set()
             return []
         try:
             names = {e.name for e in os.scandir(self.folder) if e.name.endswith(".png")}

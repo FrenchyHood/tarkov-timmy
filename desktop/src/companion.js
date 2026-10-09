@@ -245,6 +245,8 @@ class Companion extends EventEmitter {
     try {
       names = new Set(fs.readdirSync(dir).filter((n) => n.endsWith(".png")));
     } catch {
+      // Folder doesn't exist yet: Tarkov creates it with the first screenshot, which must count as new.
+      this.seen ??= new Set();
       return;
     }
     if (this.seen === null) {

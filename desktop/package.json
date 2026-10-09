@@ -1,7 +1,7 @@
 {
   "name": "tarkov-timmy",
   "productName": "Tarkov Timmy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Squad map, extracts, quests and overlay for Tarkov newcomers.",
   "author": "FrenchyHood",
   "license": "MIT",
