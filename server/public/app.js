@@ -18,7 +18,7 @@ const PING_KINDS = {
   danger: { label: "Danger", icon: "!", color: "#ff9b3d" },
 };
 // Maps whose calibration lives under another key in calibration.json.
-const CALIBRATION_ALIAS = { "ground-zero-21": "ground-zero", "night-factory": "factory" };
+const CALIBRATION_ALIAS = { "ground-zero-21": "ground-zero", "ground-zero-tutorial": "ground-zero", "night-factory": "factory", "the-lab-dark": "the-lab" };
 // Set when running inside the Tarkov Timmy desktop app (see desktop/src/preload-site.js).
 const desktop = window.timmyDesktop ?? null;
 const OVERLAY = new URLSearchParams(location.search).has("overlay");
@@ -578,12 +578,10 @@ function drawStatic(map, cal) {
       .addTo(hazards);
   }
 
-  // Bosses: tie spawnLocations (by spawnKey) to the map's spawn points with the "boss" category.
   for (const b of map.bosses ?? []) {
     for (const loc of b.spawnLocations ?? []) {
-      const points = (map.spawns ?? []).filter((s) => s.zoneName === loc.spawnKey && s.categories?.includes("boss"));
-      for (const s of points) {
-        L.marker(pos(s.position), { icon: pinIcon({ color: "var(--boss)", cls: "mk-boss", label: `${b.boss.name} ${Math.round(b.spawnChance * 100)}%` }) })
+      for (const p of bossPoints(map, loc)) {
+        L.marker(pos(p), { icon: pinIcon({ color: "var(--boss)", cls: "mk-boss", label: `${b.boss.name} ${Math.round(b.spawnChance * 100)}%` }) })
           .bindPopup(bossPopup(b, loc))
           .addTo(bosses);
       }
@@ -612,6 +610,13 @@ function drawStatic(map, cal) {
   for (const s of map.btrStops ?? []) {
     L.marker(pos(s), { icon: pinIcon({ color: "#9aa0a6", label: `BTR: ${s.name}` }) }).addTo(btr);
   }
+}
+
+// A boss spawn location's points: given directly by the JSON API, or (GraphQL data) the map's
+// "boss" spawn points whose zone matches the location's spawnKey.
+function bossPoints(map, loc) {
+  if (loc.positions?.length) return loc.positions;
+  return (map.spawns ?? []).filter((s) => s.zoneName === loc.spawnKey && s.categories?.includes("boss")).map((s) => s.position);
 }
 
 function bossPopup(b, loc) {
@@ -738,9 +743,8 @@ function renderBossesTab() {
   for (const row of el.querySelectorAll("[data-boss]")) {
     row.onclick = () => {
       const b = bosses[row.dataset.boss];
-      const keys = new Set((b.spawnLocations ?? []).map((l) => l.spawnKey));
-      const s = (map.spawns ?? []).find((sp) => keys.has(sp.zoneName) && sp.categories?.includes("boss"));
-      if (s) flyTo(s.position);
+      const p = (b.spawnLocations ?? []).flatMap((l) => bossPoints(map, l))[0];
+      if (p) flyTo(p);
     };
   }
   for (const row of el.querySelectorAll("[data-hazard]")) row.onclick = () => flyTo(hazards[row.dataset.hazard].position);

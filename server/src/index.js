@@ -1,7 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
+import { LOADERS } from "./tarkov-data.js";
 
 const TARKOV_API = "https://api.tarkov.dev/graphql";
 const DATA_FRESH_MS = 60 * 60 * 1000; // refetch upstream at most hourly
+const UPSTREAM_RETRY_MS = 10 * 60 * 1000; // after a failed refresh, wait before trying upstream again
 const PING_TTL_MS = 3 * 60 * 1000;
 const ROOM_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const NAME_RE = /^[\p{L}\p{N} _.-]{1,24}$/u;
@@ -302,25 +304,52 @@ export class RaidRoom extends DurableObject {
 
   // ---------- tarkov.dev data cache (only used by the "__data_cache__" instance) ----------
 
+  // Freshness order: cached copy (< 1 h old) → tarkov.dev JSON API → tarkov.dev GraphQL API →
+  // older cached copy → daily snapshot committed to the GitHub repo. Any one of them is enough.
   async getDataset(name) {
     const meta = (await this.ctx.storage.get(`data:${name}:meta`)) || null;
     if (meta && Date.now() - meta.fetchedAt < DATA_FRESH_MS) return this.readDataset(name, meta);
-    try {
-      const body = await fetchTarkovDev(DATASETS[name]);
-      await this.writeDataset(name, body);
-      return body;
-    } catch (err) {
-      if (meta) return this.readDataset(name, meta); // serve stale rather than nothing
-      throw err;
+
+    // While upstream is failing, don't retry it on every request.
+    const lastFail = (await this.ctx.storage.get(`data:${name}:lastFail`)) || 0;
+    const errors = [];
+    if (Date.now() - lastFail > UPSTREAM_RETRY_MS) {
+      const sources = [
+        ["json.tarkov.dev", async () => JSON.stringify(await LOADERS[name]())],
+        ["api.tarkov.dev", () => fetchTarkovDev(DATASETS[name])],
+      ];
+      for (const [label, load] of sources) {
+        try {
+          const body = await load();
+          await this.writeDataset(name, body);
+          await this.ctx.storage.delete(`data:${name}:lastFail`);
+          return body;
+        } catch (err) {
+          errors.push(`${label}: ${err.message || err}`);
+        }
+      }
+      await this.ctx.storage.put(`data:${name}:lastFail`, Date.now());
     }
+
+    if (meta) return this.readDataset(name, meta); // stale beats nothing
+    if (this.env.GITHUB_REPO) {
+      const res = await fetch(`https://raw.githubusercontent.com/${this.env.GITHUB_REPO}/main/data/${name}.json`);
+      if (res.ok) {
+        const body = await res.text();
+        await this.writeDataset(name, body, Date.now() - DATA_FRESH_MS); // counts as stale: retry upstream next time
+        return body;
+      }
+      errors.push(`GitHub snapshot: HTTP ${res.status}`);
+    }
+    throw new Error(errors.join("; ") || "no data source available");
   }
 
   // Values are capped at ~2 MB, so store gzip'd chunks.
-  async writeDataset(name, body) {
+  async writeDataset(name, body, fetchedAt = Date.now()) {
     const gz = await new Response(new Blob([body]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
     const CHUNK = 1_000_000;
     const chunks = Math.ceil(gz.byteLength / CHUNK);
-    const entries = { [`data:${name}:meta`]: { fetchedAt: Date.now(), chunks } };
+    const entries = { [`data:${name}:meta`]: { fetchedAt, chunks } };
     for (let i = 0; i < chunks; i++) entries[`data:${name}:${i}`] = gz.slice(i * CHUNK, (i + 1) * CHUNK);
     await this.ctx.storage.put(entries);
   }
