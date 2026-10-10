@@ -703,22 +703,24 @@ function drawStatic(map, cal) {
       .addTo(transits);
   }
 
-  for (const z of map.hazards ?? []) {
-    if (!z.position) continue;
-    outline(z.outline, "#ff9b3d", hazards, { dashArray: "4 4" });
-    L.marker(pos(z.position), { icon: pinIcon({ color: "var(--hazard)", label: HAZARD_LABEL[z.hazardType] ?? z.name ?? z.hazardType }) })
-      .bindPopup(`<h4>${esc(HAZARD_LABEL[z.hazardType] ?? z.hazardType)}</h4><div class="muted">${esc(z.name)}</div>`)
+  // Danger zones come in many small pieces: draw every outline, but label each group of nearby
+  // same-type pieces once (e.g. Lighthouse: 116 pieces → 13 labels).
+  for (const group of clusterBy((map.hazards ?? []).filter((z) => z.position), (z) => z.position, 80, (z) => z.hazardType)) {
+    for (const z of group) outline(z.outline, "#ff9b3d", hazards, { dashArray: "4 4" });
+    const type = HAZARD_LABEL[group[0].hazardType] ?? group[0].hazardType;
+    L.marker(pos(centroid(group.map((z) => z.position))), { icon: pinIcon({ color: "var(--hazard)", label: type }) })
+      .bindPopup(`<h4>${esc(type)}</h4><div class="muted">${group.length > 1 ? `${group.length} areas close together` : esc(group[0].name ?? "")}</div>`)
       .addTo(hazards);
   }
 
-  for (const b of map.bosses ?? []) {
-    for (const loc of b.spawnLocations ?? []) {
-      for (const p of bossPoints(map, loc)) {
-        L.marker(pos(p), { icon: pinIcon({ color: "var(--boss)", cls: "mk-boss", label: `${b.boss.name} ${Math.round(b.spawnChance * 100)}%` }) })
-          .bindPopup(bossPopup(b, loc))
-          .addTo(bosses);
-      }
-    }
+  // Bosses: one marker per spawn area listing everyone who can spawn there, instead of one per boss per
+  // spawn point (The Lab: 168 stacked markers → 37).
+  for (const spot of bossSpots(map)) {
+    const top = spot.entries[0];
+    const label = `${top.b.boss.name} ${Math.round(top.b.spawnChance * 100)}%${spot.entries.length > 1 ? ` +${spot.entries.length - 1}` : ""}`;
+    L.marker(pos(spot.at), { icon: pinIcon({ color: "var(--boss)", cls: "mk-boss", label }) })
+      .bindPopup(spot.entries.map(({ b, loc }) => bossPopup(b, loc)).join('<hr class="pop-sep">'))
+      .addTo(bosses);
   }
 
   for (const s of map.spawns ?? []) {
@@ -749,6 +751,45 @@ function drawStatic(map, cal) {
   for (const s of map.btrStops ?? []) {
     L.marker(pos(s), { icon: pinIcon({ color: "#9aa0a6", label: `BTR: ${s.name}` }) }).addTo(btr);
   }
+}
+
+// Groups items (sharing `keyOf`, if given) that are within `radius` metres of each other. "chain" joins an
+// item to a group if it's near ANY member, so pieces of one long zone merge; "center" only if it's near the
+// group's centre, so groups stay compact and can't chain across a whole map.
+function clusterBy(items, posOf, radius, keyOf = () => "", linkage = "chain") {
+  const groups = [];
+  const near = (g, it) => linkage === "center"
+    ? dist(centroid(g.items.map(posOf)), posOf(it)) < radius
+    : g.items.some((o) => dist(posOf(o), posOf(it)) < radius);
+  for (const it of items) {
+    const close = groups.filter((g) => g.key === keyOf(it) && near(g, it));
+    const nearGroups = linkage === "center" ? close.slice(0, 1) : close;
+    if (nearGroups.length) {
+      const [first, ...rest] = nearGroups;
+      first.items.push(it);
+      for (const g of rest) { first.items.push(...g.items); groups.splice(groups.indexOf(g), 1); }
+      continue;
+    }
+    groups.push({ key: keyOf(it), items: [it] });
+  }
+  return groups.map((g) => g.items);
+}
+const centroid = (ps) => ({ x: ps.reduce((s, p) => s + p.x, 0) / ps.length, y: ps.reduce((s, p) => s + (p.y ?? 0), 0) / ps.length, z: ps.reduce((s, p) => s + p.z, 0) / ps.length });
+
+// Boss spawn spots: every boss spawn point on the map, clustered (within 30 m of a spot's centre) so bosses sharing an area get one
+// marker. Entries are sorted by spawn chance and listed once per boss.
+function bossSpots(map) {
+  const points = [];
+  for (const b of map.bosses ?? []) for (const loc of b.spawnLocations ?? []) for (const p of bossPoints(map, loc)) points.push({ b, loc, p });
+  const spots = clusterBy(points, (x) => x.p, 30, () => "", "center").map((group) => {
+    const seen = new Map();
+    for (const x of group) if (!seen.has(x.b.boss.name)) seen.set(x.b.boss.name, x);
+    const entries = [...seen.values()].sort((a, c) => c.b.spawnChance - a.b.spawnChance);
+    return { at: centroid(group.map((x) => x.p)), entries };
+  });
+  // Neighbouring spots with exactly the same bosses (e.g. Customs' Fortress) read as one place.
+  return clusterBy(spots, (s) => s.at, 50, (s) => s.entries.map((e) => e.b.boss.name).join("|"), "center")
+    .map((g) => ({ at: centroid(g.map((s) => s.at)), entries: g[0].entries }));
 }
 
 // A boss spawn location's points: given directly by the JSON API, or (GraphQL data) the map's
@@ -996,12 +1037,19 @@ function drawQuests() {
   const targets = questTargets(map, keys);
   // With more than one person's quests showing, say whose each marker is.
   const named = new Set(targets.map((t) => t.key)).size > 1;
+  // Squadmates often share an objective spot; give each spot one marker naming everyone it's for.
+  const points = [];
   for (const t of targets) {
-    const color = playerColor(t.key);
-    const label = `${named ? `${t.player.name}: ` : ""}${t.itemName ?? t.task.name}`;
-    const popup = `<h4>${esc(t.task.name)}</h4><div>${esc(t.objective.description)}</div><div class="muted" style="color:${color}">${esc(t.player.name)} · ${esc(t.task.trader.name)}</div>`;
-    for (const z of t.zones) outline(z.outline, color, group, { dashArray: "2 4" });
-    for (const p of t.points) L.marker(pos(p), { icon: pinIcon({ color, cls: "mk-quest", label }) }).bindPopup(popup).addTo(group);
+    for (const z of t.zones) outline(z.outline, playerColor(t.key), group, { dashArray: "2 4" });
+    for (const p of t.points) points.push({ t, p });
+  }
+  for (const spot of clusterBy(points, (x) => x.p, 3, (x) => x.t.itemName ?? x.t.task.name)) {
+    const first = spot[0].t;
+    const people = [...new Map(spot.map((x) => [x.t.key, x.t.player])).values()];
+    const label = `${named ? `${people.map((p) => p.name).join(" + ")}: ` : ""}${first.itemName ?? first.task.name}`;
+    const popup = `<h4>${esc(first.task.name)}</h4>` + [...new Map(spot.map((x) => [`${x.t.key}|${x.t.objective.id}`, x.t])).values()]
+      .map((t) => `<div>${esc(t.objective.description)}</div><div class="muted" style="color:${playerColor(t.key)}">${esc(t.player.name)} · ${esc(t.task.trader.name)}</div>`).join("");
+    L.marker(pos(spot[0].p), { icon: pinIcon({ color: playerColor(first.key), cls: "mk-quest", label }) }).bindPopup(popup).addTo(group);
   }
 }
 
