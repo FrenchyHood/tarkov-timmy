@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld("timmyDesktop", {
   toggleOverlay: () => ipcRenderer.send("timmy:toggle-overlay"),
   toggleClickThrough: () => ipcRenderer.send("timmy:toggle-click-through"),
   setOpacity: (v) => ipcRenderer.send("timmy:set-opacity", Number(v)),
+  lastScan: () => ipcRenderer.invoke("timmy:last-scan"),
+  scanLatest: () => ipcRenderer.invoke("timmy:scan-latest"),
+  onStashScan: (cb) => ipcRenderer.on("timmy:stash-scan", (_e, r) => cb(r)),
+  onStashScanning: (cb) => ipcRenderer.on("timmy:stash-scanning", (_e, busy) => cb(busy)),
   resizeOverlay: (width, height) => ipcRenderer.send("timmy:overlay-resize", { width, height }),
   resizeOverlayDone: () => ipcRenderer.send("timmy:overlay-resize-done"),
 });

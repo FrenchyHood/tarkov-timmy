@@ -336,6 +336,64 @@ function restartAll() {
   updateTray();
 }
 
+// ---------- stash scanner ----------
+// Out of raid, a screenshot of the stash (taken with Tarkov's own screenshot key) is read for items.
+// Everything happens on this PC; the screenshot is never uploaded.
+
+let lastScan = null;
+let stashItems = null; // { at, items }
+let scanQueue = Promise.resolve();
+const lastScanPath = () => path.join(app.getPath("userData"), "last-scan.json");
+try { lastScan = JSON.parse(fs.readFileSync(lastScanPath(), "utf8")); } catch {}
+
+async function getStashItems() {
+  if (stashItems && Date.now() - stashItems.at < 60 * 60 * 1000) return stashItems.items;
+  const res = await fetch(`${settings.server.replace(/\/$/, "")}/api/data/items?room=${settings.room}`);
+  if (!res.ok) throw new Error(`item data: HTTP ${res.status}`);
+  stashItems = { at: Date.now(), items: (await res.json()).items };
+  return stashItems.items;
+}
+
+function scanScreenshot(file, { manual = false } = {}) {
+  scanQueue = scanQueue.then(async () => {
+    try {
+      await new Promise((r) => setTimeout(r, 1500)); // let Tarkov finish writing the file
+      mainWin?.webContents.send("timmy:stash-scanning", true);
+      const { scanStash } = require("./scanner/stash-scan");
+      const result = await scanStash(file, await getStashItems(), app.getPath("userData"));
+      const found = result.ok ? result.items.filter((i) => i.id).length : 0;
+      if (!result.ok || found < 3) {
+        if (manual) notify("No stash found", "That screenshot doesn't look like your stash. Open the stash and press your screenshot key.");
+        return;
+      }
+      lastScan = result;
+      fs.writeFileSync(lastScanPath(), JSON.stringify(result));
+      mainWin?.webContents.send("timmy:stash-scan", result);
+      notify("Stash scanned", `${found} items recognised. Open Tarkov Timmy → Stash to see what to keep and sell.`);
+    } catch (e) {
+      notify("Stash scan failed", String(e.message || e).slice(0, 150));
+    } finally {
+      mainWin?.webContents.send("timmy:stash-scanning", false);
+    }
+  });
+  return scanQueue;
+}
+
+// "Scan my latest screenshot" button: newest screenshot without a map position in its name.
+function latestMenuScreenshot() {
+  const dir = companion.status.screenshotsDir;
+  try {
+    return fs.readdirSync(dir)
+      .filter((n) => n.endsWith(".png") && !/_-?\d+\.\d{2}, -?\d+\.\d{2}, -?\d+\.\d{2}_/.test(n))
+      .map((n) => ({ file: path.join(dir, n), t: fs.statSync(path.join(dir, n)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)[0]?.file ?? null;
+  } catch {
+    return null;
+  }
+}
+
+companion.on("menu-screenshot", (file) => scanScreenshot(file));
+
 // ---------- IPC ----------
 
 function fromSite(e) {
@@ -355,6 +413,14 @@ ipcMain.on("timmy:notify", (e, { title, body }) => {
   if (fromSite(e)) notify(String(title).slice(0, 80), String(body ?? "").slice(0, 200));
 });
 ipcMain.on("timmy:open-settings", (e) => fromSite(e) && openSettings());
+ipcMain.handle("timmy:last-scan", (e) => (fromSite(e) ? lastScan : null));
+ipcMain.handle("timmy:scan-latest", async (e) => {
+  if (!fromSite(e)) return { ok: false };
+  const file = latestMenuScreenshot();
+  if (!file) return { ok: false, error: "No stash screenshot found yet. Open your stash in Tarkov and press your screenshot key." };
+  scanScreenshot(file, { manual: true });
+  return { ok: true };
+});
 ipcMain.on("timmy:toggle-overlay", (e) => fromSite(e) && toggleOverlay());
 ipcMain.on("timmy:toggle-click-through", (e) => fromSite(e) && toggleClickThrough());
 // Resize grip in the overlay's corner: the page sends the size it wants while dragging.
@@ -436,4 +502,7 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   // Stay alive in the tray.
 });
-app.on("will-quit", () => globalShortcut.unregisterAll());
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+  try { require("./scanner/stash-scan").shutdown(); } catch {}
+});

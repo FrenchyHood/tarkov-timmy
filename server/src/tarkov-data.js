@@ -161,6 +161,7 @@ export async function loadItems() {
         trader: best ? { name: trader(best.trader), price: best.priceRUB } : null,
         types: (i.types ?? []).filter((t) => ["barter", "keys", "ammo", "meds", "provisions", "gun", "mods", "armor", "rig", "backpack", "container", "headphones", "glasses", "helmet", "wearable", "grenade"].includes(t)),
         icon: i.iconLink ?? null,
+        grid: i.gridImageLink ?? null, // full-size stash icon, used by the desktop app's stash scanner
         wiki: i.wikiLink ?? null,
       };
     });

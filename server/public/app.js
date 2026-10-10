@@ -101,6 +101,16 @@ async function boot() {
     desktop.onStatus((s) => { app.local = s; if (app.tab === "squad") renderSquadTab(); });
     desktop.status().then((s) => (app.local = s));
     desktop.onOverlay((s) => document.body.classList.toggle("click-through", s.clickThrough));
+    if (desktop.lastScan && !OVERLAY) {
+      desktop.lastScan().then((r) => { if (r) stash.scan = r; });
+      // A new scan opens the scanned-stash view so the results are right there.
+      desktop.onStashScan((r) => { stash.scan = r; stash.selected = null; openStash("scan"); });
+      desktop.onStashScanning((busy) => {
+        stash.scanning = busy;
+        const b = $("#scan-latest");
+        if (b) b.textContent = busy ? "Scanning…" : "Scan my latest screenshot";
+      });
+    }
   }
   if (!app.name) return askName();
   enterRoom();
@@ -1348,7 +1358,10 @@ function desktopStatusHtml() {
 const CURRENCY_IDS = new Set(["5449016a4bdc2d6f028b456f", "5696686a4bdc2da3298b456a", "569668774bdc2da2298b4568"]); // ₽ $ €
 const VALUABLE_PER_SLOT = 40000;
 const JUNK_PER_SLOT = 5000;
-const stash = { data: null, loading: null, tab: "check", query: "", squad: store.get("stashSquad", true), hideout: store.get("hideoutLevels", {}) };
+const stash = {
+  data: null, loading: null, tab: desktop ? "scan" : "check", query: "", squad: store.get("stashSquad", true), hideout: store.get("hideoutLevels", {}),
+  scan: null, scanning: false, selected: null, fixes: store.get("scanFixes", {}), // stash scanner (desktop app only)
+};
 
 const rub = (n) => (n == null ? "–" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M ₽` : n >= 1e4 ? `${Math.round(n / 1e3)}k ₽` : `${Math.round(n).toLocaleString()} ₽`);
 
@@ -1453,7 +1466,145 @@ async function openStash(tab) {
       return;
     }
   }
-  ({ check: renderStashCheck, keep: renderKeepList, hideout: renderHideoutLevels })[stash.tab]();
+  ({ scan: renderScan, check: renderStashCheck, keep: renderKeepList, hideout: renderHideoutLevels })[stash.tab]();
+}
+
+// ---------- scanned stash (desktop app) ----------
+// The app reads items off a stash screenshot (Tarkov's screenshot key, out of raid). Here we draw the
+// results over that picture with a verdict colour per item, and let people correct mistakes.
+
+const scanFixKey = (label) => String(label ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+function scanItems() {
+  const d = stash.data, s = stash.scan;
+  return (s?.items ?? []).map((it) => {
+    const fixId = stash.fixes[scanFixKey(it.label)];
+    const id = fixId ?? it.id;
+    const item = id ? d.byId.get(id) : null;
+    const v = item ? itemVerdict(item) : null;
+    const unsure = !fixId && (!item || it.confidence < 0.5);
+    const kind = !item ? "unknown" : v.keep.length ? "keep" : v.later.length ? "later" : v.tags.some(([c]) => c === "valuable") ? "valuable" : "sell";
+    return { ...it, id, item, v, unsure, fixed: !!fixId, kind };
+  });
+}
+
+function bestSale(item) {
+  const fleaOk = item.flea && !item.noFlea;
+  if (item.trader && fleaOk && item.flea > item.trader.price * 1.2) return { where: `Flea${item.fleaLevel ? ` (lvl ${item.fleaLevel}+)` : ""}`, price: item.flea };
+  if (item.trader) return { where: item.trader.name, price: item.trader.price };
+  if (fleaOk) return { where: "Flea", price: item.flea };
+  return null;
+}
+
+function renderScan() {
+  const body = $("#stash-body");
+  const s = stash.scan;
+  const intro = `<div class="hint">Out of raid, open your stash in Tarkov and press your <b>screenshot key</b>. Tarkov Timmy reads the items off the picture
+    (on this PC, nothing is uploaded) and shows what to keep and sell. Scroll and press it again for the next part of your stash.</div>`;
+  const scanBtn = `<button class="btn" id="scan-latest">${stash.scanning ? "Scanning…" : "Scan my latest screenshot"}</button>`;
+  if (!s) {
+    body.innerHTML = `${intro}${scanBtn}`;
+    $("#scan-latest").onclick = scanLatest;
+    return;
+  }
+  const items = scanItems();
+  const known = items.filter((i) => i.item);
+  const count = (k) => items.filter((i) => i.kind === k).length;
+  const total = known.reduce((sum, i) => sum + (bestSale(i.item)?.price ?? 0), 0);
+  // Sell list: everything not needed for quests/hideout, grouped by where it sells best.
+  const sell = new Map();
+  for (const i of known) {
+    if (i.kind === "keep" || i.kind === "later") continue;
+    const b = bestSale(i.item);
+    if (!b) continue;
+    const g = sell.get(b.where) ?? { total: 0, items: new Map() };
+    g.total += b.price;
+    const e = g.items.get(i.item.id) ?? { item: i.item, n: 0, price: b.price };
+    e.n++;
+    g.items.set(i.item.id, e);
+    sell.set(b.where, g);
+  }
+  const sel = items[stash.selected] ?? null;
+  const { cols, rows } = s.grid;
+
+  body.innerHTML = `
+    <div class="scan-head">
+      <div class="scan-chips">
+        <span class="verdict keep">${count("keep")} keep</span><span class="verdict later">${count("later")} needed later</span>
+        <span class="verdict valuable">${count("valuable")} valuable</span><span class="verdict junk">${count("sell")} safe to sell</span>
+        ${items.filter((i) => i.unsure).length ? `<span class="verdict unsure">${items.filter((i) => i.unsure).length} unsure</span>` : ""}
+        <span class="sub">· ${known.length} items worth ~${rub(total)} · scanned ${new Date(s.at).toLocaleTimeString()}</span>
+      </div>
+      ${scanBtn}
+    </div>
+    <div class="scan-cols">
+      <div>
+        <div class="scan-img" style="aspect-ratio:${cols} / ${rows}">
+          <img src="${s.image}" alt="Your stash" />
+          ${items.map((i, n) => {
+            const w = Math.min(i.item?.w ?? 1, i.col + 1), h = Math.min(i.item?.h ?? 1, rows - i.row);
+            return `<button class="scan-box ${i.kind}${i.unsure ? " unsure" : ""}${n === stash.selected ? " sel" : ""}" data-n="${n}"
+              style="left:${((i.col + 1 - w) / cols) * 100}%;top:${(i.row / rows) * 100}%;width:${(w / cols) * 100}%;height:${(h / rows) * 100}%"
+              title="${esc(i.item?.name ?? `Unrecognised: ${i.label}`)}"></button>`;
+          }).join("")}
+        </div>
+        <div class="sub" style="margin-top:6px">Click an item for details. Outline: <span class="legend-k keep">keep</span> <span class="legend-k later">needed later</span>
+          <span class="legend-k valuable">valuable</span> <span class="legend-k sell">safe to sell</span> <span class="legend-k unsure">unsure</span></div>
+      </div>
+      <div class="scan-side">
+        ${sel ? scanDetail(sel) : `<div class="hint">Click an item in the picture to see why, or to fix it if it's wrong.</div>`}
+        <div class="section-title">Sell list</div>
+        ${[...sell].sort((a, b) => b[1].total - a[1].total).map(([where, g]) => `
+          <div class="keep-station">${esc(where)} · ${rub(g.total)}</div>
+          ${[...g.items.values()].sort((a, b) => b.price * b.n - a.price * a.n).map((e) => `
+            <div class="keep-row">${e.item.icon ? `<img class="item-icon sm" src="${esc(e.item.icon)}" alt="" loading="lazy" />` : ""}
+              <span class="keep-count">×${e.n}</span><span class="keep-main">${esc(e.item.name)}</span><span class="sub keep-price">${rub(e.price * e.n)}</span></div>`).join("")}
+        `).join("") || `<div class="muted">Nothing here you should sell. Everything's needed for quests or the hideout.</div>`}
+      </div>
+    </div>`;
+
+  $("#scan-latest").onclick = scanLatest;
+  for (const b of body.querySelectorAll(".scan-box")) b.onclick = () => { stash.selected = Number(b.dataset.n); renderScan(); };
+  wireScanDetail(sel);
+}
+
+function scanDetail(i) {
+  const firNote = i.item && i.v?.keep.some((k) => k.includes("found in raid")) && !i.fir
+    ? `<div class="hint warn">This one isn't marked found in raid, so it won't count for quests that need found-in-raid items.</div>` : "";
+  const alts = (i.alternatives ?? []).filter((id) => id !== i.id).map((id) => stash.data.byId.get(id)).filter(Boolean);
+  return `
+    <div class="section-title">Selected · label read as “${esc(i.label)}”${i.fixed ? " · corrected by you" : ""}</div>
+    ${i.item ? itemCard(i.item, i.fir ? ` <span class="verdict fir">✓ found in raid</span>` : "") : `<div class="hint">Couldn't recognise this one.</div>`}
+    ${firNote}
+    <div class="scan-fix">
+      <div class="sub">${i.unsure ? "Not sure about this one." : "Wrong item?"} Pick the right one${alts.length ? "" : " by searching"}:</div>
+      ${alts.slice(0, 6).map((a) => `<button class="btn small" data-fix="${esc(a.id)}">${esc(a.name)}</button>`).join("")}
+      <input id="scan-fix-search" class="search" placeholder="Search for the right item…" autocomplete="off" spellcheck="false" />
+      <div id="scan-fix-results"></div>
+      ${i.fixed ? `<button class="btn small" id="scan-unfix">Undo my correction</button>` : ""}
+    </div>`;
+}
+
+function wireScanDetail(sel) {
+  if (!sel) return;
+  const setFix = (id) => {
+    stash.fixes[scanFixKey(sel.label)] = id;
+    store.set("scanFixes", stash.fixes);
+    renderScan();
+  };
+  for (const b of document.querySelectorAll("[data-fix]")) b.onclick = () => setFix(b.dataset.fix);
+  $("#scan-unfix")?.addEventListener("click", () => { delete stash.fixes[scanFixKey(sel.label)]; store.set("scanFixes", stash.fixes); renderScan(); });
+  const input = $("#scan-fix-search");
+  input.oninput = () => {
+    $("#scan-fix-results").innerHTML = searchItems(input.value).slice(0, 8)
+      .map((it) => `<button class="btn small" data-fix="${esc(it.id)}">${esc(it.name)}</button>`).join("");
+    for (const b of document.querySelectorAll("#scan-fix-results [data-fix]")) b.onclick = () => setFix(b.dataset.fix);
+  };
+}
+
+async function scanLatest() {
+  const r = await desktop?.scanLatest();
+  if (r && !r.ok) alert(r.error);
 }
 
 function squadToggle() {

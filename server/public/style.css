@@ -220,3 +220,27 @@ body.overlay .app-version { display: none; }
 .hideout-cell { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
 @media (max-width: 760px) { .keep-cols { grid-template-columns: 1fr; } .stash-head h2 { display: none; } }
 body.overlay #stash, body.overlay #stash-btn { display: none !important; }
+
+/* ---------- scanned stash ---------- */
+.scan-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.scan-chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.verdict.unsure { color: var(--boss); border: 1px dashed rgba(255,90,90,.6); }
+.scan-cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); gap: 18px; align-items: start; }
+.scan-img { position: relative; width: 100%; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+.scan-img img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.scan-box { position: absolute; padding: 0; background: transparent; border: 2px solid; border-radius: 3px; cursor: pointer; box-sizing: border-box; }
+.scan-box.keep { border-color: rgba(95,211,138,.95); background: rgba(95,211,138,.12); }
+.scan-box.later { border-color: rgba(90,169,255,.9); background: rgba(90,169,255,.08); }
+.scan-box.valuable { border-color: rgba(214,178,94,.95); background: rgba(214,178,94,.14); }
+.scan-box.sell { border-color: rgba(154,160,166,.55); }
+.scan-box.unknown, .scan-box.unsure { border: 2px dashed rgba(255,90,90,.9); }
+.scan-box:hover, .scan-box.sel { box-shadow: 0 0 0 2px #fff inset; }
+.scan-side { position: sticky; top: 0; }
+.scan-fix { display: grid; gap: 6px; margin: 8px 0 14px; }
+.scan-fix .search { margin: 0; }
+.btn.small { padding: 4px 9px; font-size: 12px; text-align: left; }
+.hint.warn { border-left: 3px solid var(--hazard); }
+.legend-k { padding: 0 5px; border: 2px solid; border-radius: 3px; font-size: 11px; }
+.legend-k.keep { border-color: var(--pmc); } .legend-k.later { border-color: var(--scav); } .legend-k.valuable { border-color: var(--accent); }
+.legend-k.sell { border-color: #9aa0a6; } .legend-k.unsure { border: 2px dashed var(--boss); }
+@media (max-width: 900px) { .scan-cols { grid-template-columns: 1fr; } .scan-side { position: static; } }
