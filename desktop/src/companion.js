@@ -415,6 +415,13 @@ class Companion extends EventEmitter {
     }
     for (const name of names) {
       if (this.seen.has(name)) continue;
+      // Out of raid (menus, stash, hideout) a screenshot isn't a map position: never send or delete it.
+      // Those are kept for the stash scanner. Without logs we can't tell, so assume in raid as before.
+      const inRaid = !this.tailer || this.tailer.raidState === "loading" || this.tailer.raidState === "started";
+      if (!inRaid) {
+        this.emit("menu-screenshot", path.join(dir, name));
+        continue;
+      }
       const pos = parseScreenshot(name);
       if (!pos) continue;
       const map = this.tailer?.map ?? null;

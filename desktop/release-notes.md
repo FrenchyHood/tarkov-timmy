@@ -1,4 +1,2 @@
-- **PMC vs Scav is detected automatically**, so the map shows the right extracts for each raid. (It learns which profile is your PMC from your raid history.)
-- **Overlay resizing fixed:** drag any edge, or the grip in the bottom-right corner. Position and size are remembered.
-- **Overlay mirrors the main map:** turning layers on or off, changing floor, map or route settings in one window updates the other instantly.
-- Map updates (already live): suggested route to quest objectives and loot, loot containers layer, Follow me (◎), and squadmates' quest markers labeled with their names.
+- Screenshots taken **outside a raid** (stash, menus, hideout) are no longer read as map positions or deleted. They're kept, ready for the upcoming stash scanner.
+- Checks for updates every 4 hours while running in the tray.
