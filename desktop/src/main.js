@@ -494,6 +494,13 @@ app.whenReady().then(() => {
     if (!process.argv.includes("--hidden")) showMain();
     if (settings.overlay.visible) createOverlay();
   }
+  // Dev/testing only: scan a given screenshot at startup and save the result (checks packaged builds).
+  if (SNAP_DIR && process.env.TIMMY_TEST_SCAN) {
+    getStashItems()
+      .then((items) => require("./scanner/stash-scan").scanStash(process.env.TIMMY_TEST_SCAN, items, app.getPath("userData")))
+      .then((r) => fs.writeFileSync(path.join(SNAP_DIR, "scan.json"), JSON.stringify({ ...r, image: r.image ? "(jpeg)" : null })))
+      .catch((e) => fs.writeFileSync(path.join(SNAP_DIR, "scan-error.txt"), String(e.stack || e)));
+  }
   checkForUpdates(false);
   // The app lives in the tray for days, so keep checking (it downloads quietly and installs on quit).
   setInterval(() => checkForUpdates(false), 4 * 60 * 60 * 1000);
