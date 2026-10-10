@@ -425,6 +425,9 @@ function wireUi() {
   };
   $("#panel-toggle").onclick = () => { $("#panel").classList.toggle("collapsed"); app.leaflet?.invalidateSize(); };
   $("#overlay-btn").onclick = () => desktop?.toggleOverlay();
+  $("#stash-btn").onclick = () => openStash();
+  $("#stash-close").onclick = () => { $("#stash").hidden = true; app.leaflet?.invalidateSize(); };
+  for (const b of document.querySelectorAll("#stash-tabs button")) b.onclick = () => openStash(b.dataset.stab);
   if (OVERLAY && desktop?.resizeOverlay) {
     // Corner grip: resize the overlay window by dragging (edges work too).
     const grip = $("#ov-grip");
@@ -1336,6 +1339,231 @@ function desktopStatusHtml() {
     ${line(s.server === "ok" ? true : s.server === "idle" ? null : false, s.server === "ok" ? "Sharing your position" : esc(s.lastError || "Not connected yet"))}
     ${s.lastPosition ? line(true, `Last screenshot position ${ago(Date.now() - s.lastPosition.at)}`) : line(null, "Press your screenshot key in raid to share your position")}
     <div style="margin-top:8px"><button class="btn" onclick="window.timmyDesktop.toggleOverlay()">Toggle overlay</button></div>`;
+}
+
+// ---------- stash helper ----------
+// Nothing reads your stash (only memory reading could, and that's bannable), so you search items yourself.
+// Verdicts combine what your squad's quests and your next hideout upgrades need with trader/flea prices.
+
+const CURRENCY_IDS = new Set(["5449016a4bdc2d6f028b456f", "5696686a4bdc2da3298b456a", "569668774bdc2da2298b4568"]); // ₽ $ €
+const VALUABLE_PER_SLOT = 40000;
+const JUNK_PER_SLOT = 5000;
+const stash = { data: null, loading: null, tab: "check", query: "", squad: store.get("stashSquad", true), hideout: store.get("hideoutLevels", {}) };
+
+const rub = (n) => (n == null ? "–" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M ₽` : n >= 1e4 ? `${Math.round(n / 1e3)}k ₽` : `${Math.round(n).toLocaleString()} ₽`);
+
+async function loadStashData() {
+  if (stash.data) return stash.data;
+  stash.loading ??= fetchData("items").then((d) => {
+    d.byId = new Map(d.items.map((i) => [i.id, i]));
+    return (stash.data = d);
+  });
+  return stash.loading;
+}
+
+// Quests that count as "active" for verdicts: mine, plus my squad's if that's switched on.
+function stashActiveQuests() {
+  const players = Object.entries(app.server?.players ?? {}).filter(([k]) => stash.squad || k === app.name.toLowerCase());
+  const active = new Map(); // task id -> player names
+  for (const [, p] of players) for (const id of p.quests ?? []) active.set(id, [...(active.get(id) ?? []), p.name]);
+  return active;
+}
+const myEndedQuests = () => new Set(me()?.questsEnded ?? []);
+
+function itemVerdict(item) {
+  const d = stash.data;
+  const active = stashActiveQuests();
+  const ended = myEndedQuests();
+  const keep = [], later = [];
+  for (const q of d.quests[item.id] ?? []) {
+    const who = active.get(q.task);
+    const what = q.key ? `key for ${q.taskName}` : `${q.taskName} needs ${q.count}${q.fir ? " found in raid" : ""}${q.alternatives > 1 ? " (one of several items)" : ""}`;
+    if (who) keep.push(`${what} · ${who.join(", ")}`);
+    else if (!ended.has(q.task)) later.push(`${what}${q.kappa ? " · Kappa" : ""}`);
+  }
+  for (const s of d.stations) {
+    const cur = Number(stash.hideout[s.id] ?? 0);
+    for (const l of s.levels) {
+      if (l.level <= cur) continue;
+      const r = l.items.find((x) => x.id === item.id);
+      if (!r) continue;
+      (l.level === cur + 1 ? keep : later).push(`Hideout: ${s.name} ${l.level} needs ${r.count}${r.fir ? " found in raid" : ""}`);
+    }
+  }
+  const slots = item.w * item.h;
+  const fleaOk = item.flea && !item.noFlea;
+  const best = Math.max(item.trader?.price ?? 0, fleaOk ? item.flea : 0);
+  const perSlot = best / slots;
+  const tags = [];
+  if (keep.length) tags.push(["keep", "Keep"]);
+  else if (later.length) tags.push(["later", "Needed later"]);
+  if (perSlot >= VALUABLE_PER_SLOT) tags.push(["valuable", "Valuable"]);
+  if (!keep.length && !later.length && best && perSlot < JUNK_PER_SLOT) tags.push(["junk", "Low value"]);
+  // Where to sell, if you're selling: flea only wins when it pays clearly more than the best trader.
+  let sell = null;
+  if (item.trader && fleaOk && item.flea > item.trader.price * 1.2) sell = `Flea ~${rub(item.flea)}${item.fleaLevel ? ` (from level ${item.fleaLevel})` : ""}, or ${item.trader.name} ${rub(item.trader.price)}`;
+  else if (item.trader) sell = `${item.trader.name} ${rub(item.trader.price)}${fleaOk ? ` · flea ~${rub(item.flea)}` : ""}`;
+  else if (fleaOk) sell = `Flea ~${rub(item.flea)}${item.fleaLevel ? ` (from level ${item.fleaLevel})` : ""}`;
+  return { keep, later, tags, sell, perSlot, slots };
+}
+
+function itemCard(item, extra = "") {
+  const v = itemVerdict(item);
+  const list = (arr, cls, max = 4) => arr.length
+    ? `<ul class="why ${cls}">${arr.slice(0, max).map((x) => `<li>${esc(x)}</li>`).join("")}${arr.length > max ? `<li class="muted">+${arr.length - max} more</li>` : ""}</ul>` : "";
+  return `<div class="item-card">
+    ${item.icon ? `<img class="item-icon" src="${esc(item.icon)}" alt="" loading="lazy" />` : `<div class="item-icon"></div>`}
+    <div class="item-main">
+      <div class="item-title">${esc(item.name)} ${v.tags.map(([c, t]) => `<span class="verdict ${c}">${t}</span>`).join("")}${extra}</div>
+      <div class="item-sub">${v.sell ? `Sell: ${esc(v.sell)}` : "No sell price"} · ${v.slots} slot${v.slots > 1 ? "s" : ""}${v.perSlot ? ` · ${rub(v.perSlot)}/slot` : ""}
+        ${item.wiki ? ` · <a href="${esc(item.wiki)}" target="_blank" rel="noopener">wiki</a>` : ""}</div>
+      ${list(v.keep, "keep")}${list(v.later, "later", 2)}
+    </div>
+  </div>`;
+}
+
+function searchItems(q) {
+  const s = q.trim().toLowerCase();
+  if (s.length < 2) return [];
+  const scored = [];
+  for (const i of stash.data.items) {
+    const n = i.name.toLowerCase(), sh = (i.short ?? "").toLowerCase();
+    const score = sh === s ? 0 : n.startsWith(s) ? 1 : sh.startsWith(s) ? 2 : n.includes(s) ? 3 : sh.includes(s) ? 4 : -1;
+    if (score >= 0) scored.push([score, n.length, i]);
+  }
+  return scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, 30).map((x) => x[2]);
+}
+
+async function openStash(tab) {
+  if (tab) stash.tab = tab;
+  $("#stash").hidden = false;
+  for (const b of document.querySelectorAll("#stash-tabs button")) b.classList.toggle("active", b.dataset.stab === stash.tab);
+  const body = $("#stash-body");
+  if (!stash.data) {
+    // Let people start typing while the item data loads; their search runs once it arrives.
+    body.innerHTML = stash.tab === "check"
+      ? `<div class="stash-tools"><input id="stash-search" class="search" placeholder="Type an item name, e.g. bolts, gpu, salewa…" value="${esc(stash.query)}" autocomplete="off" spellcheck="false" /></div><div class="muted">Loading item data…</div>`
+      : `<div class="muted">Loading item data…</div>`;
+    const early = $("#stash-search");
+    if (early) { early.focus(); early.oninput = () => (stash.query = early.value); }
+    try {
+      await loadStashData();
+    } catch (err) {
+      body.innerHTML = `<div class="hint">Couldn't load item data right now (${esc(err.message)}). Try again in a bit.</div>`;
+      return;
+    }
+  }
+  ({ check: renderStashCheck, keep: renderKeepList, hideout: renderHideoutLevels })[stash.tab]();
+}
+
+function squadToggle() {
+  return `<label class="row" style="padding:2px 0"><input type="checkbox" id="stash-squad" ${stash.squad ? "checked" : ""}/><span class="sub">Count my squad's quests too</span></label>`;
+}
+function wireSquadToggle(rerender) {
+  $("#stash-squad").onchange = (e) => { stash.squad = e.target.checked; store.set("stashSquad", stash.squad); rerender(); };
+}
+
+function renderStashCheck() {
+  const body = $("#stash-body");
+  const results = searchItems(stash.query);
+  body.innerHTML = `
+    <div class="stash-tools">
+      <input id="stash-search" class="search" placeholder="Type an item name, e.g. bolts, gpu, salewa…" value="${esc(stash.query)}" autocomplete="off" spellcheck="false" />
+      ${squadToggle()}
+    </div>
+    <div class="hint">Hover an item in your stash, read its name, and type a few letters here. <b>Keep</b> = your active quests or next hideout upgrade need it.
+      <b>Valuable</b> = worth ${rub(VALUABLE_PER_SLOT)}+ per slot. Items marked <i>found in raid</i> must be ones you brought out of a raid yourself.</div>
+    <div id="stash-results">${stash.query.trim().length < 2 ? "" : results.map((i) => itemCard(i)).join("") || `<div class="muted">No items match “${esc(stash.query)}”.</div>`}</div>`;
+  const input = $("#stash-search");
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  input.oninput = () => {
+    stash.query = input.value;
+    $("#stash-results").innerHTML = stash.query.trim().length < 2 ? "" : searchItems(stash.query).map((i) => itemCard(i)).join("") || `<div class="muted">No items match.</div>`;
+  };
+  wireSquadToggle(renderStashCheck);
+}
+
+function renderKeepList() {
+  const d = stash.data;
+  const active = stashActiveQuests();
+  // Quest hand-ins for active quests. A specific item is grouped across quests; an objective that accepts
+  // any of several items (e.g. "hand in 3 meds") is one row listing the options.
+  const questNeeds = new Map();
+  const anyOf = new Map();
+  for (const [itemId, needs] of Object.entries(d.quests)) {
+    for (const q of needs) {
+      if (q.key || !active.has(q.task) || CURRENCY_IDS.has(itemId)) continue;
+      const who = `${q.taskName} (${active.get(q.task).join(", ")})`;
+      if (q.alternatives > 1) {
+        const k = `${q.task}|${q.objective}`;
+        const e = anyOf.get(k) ?? { count: q.count, fir: q.fir, why: who, ids: [] };
+        e.ids.push(itemId);
+        anyOf.set(k, e);
+        continue;
+      }
+      const e = questNeeds.get(itemId) ?? { count: 0, fir: false, why: [] };
+      e.count += q.count;
+      e.fir ||= q.fir;
+      e.why.push(who);
+      questNeeds.set(itemId, e);
+    }
+  }
+  // Next hideout level for every station.
+  const hideoutNeeds = [];
+  for (const s of d.stations) {
+    const cur = Number(stash.hideout[s.id] ?? 0);
+    const next = s.levels.find((l) => l.level === cur + 1);
+    if (next?.items.length) hideoutNeeds.push({ s, next });
+  }
+  const row = (id, count, fir, why) => {
+    const item = d.byId.get(id);
+    if (!item) return "";
+    return `<div class="keep-row">${item.icon ? `<img class="item-icon sm" src="${esc(item.icon)}" alt="" loading="lazy" />` : ""}
+      <span class="keep-count">×${count.toLocaleString()}</span>
+      <span class="keep-main"><b>${esc(item.name)}</b>${fir ? ` <span class="verdict fir">found in raid</span>` : ""}<div class="sub">${esc(why)}</div></span>
+      <span class="sub keep-price">${item.trader ? rub(item.trader.price) : ""}</span></div>`;
+  };
+  $("#stash-body").innerHTML = `
+    <div class="stash-tools">${squadToggle()}</div>
+    <div class="keep-cols">
+      <section>
+        <div class="section-title">For active quests</div>
+        ${[...questNeeds].sort((a, b) => (d.byId.get(a[0])?.name ?? "").localeCompare(d.byId.get(b[0])?.name ?? ""))
+          .map(([id, e]) => row(id, e.count, e.fir, [...new Set(e.why)].join(" · "))).join("")}
+        ${[...anyOf.values()].map((e) => {
+          const opts = e.ids.map((id) => d.byId.get(id)).filter(Boolean).sort((a, b) => (a.trader?.price ?? 0) - (b.trader?.price ?? 0));
+          return `<div class="keep-row">${opts.slice(0, 3).map((i) => i.icon ? `<img class="item-icon sm" src="${esc(i.icon)}" alt="" loading="lazy" />` : "").join("")}
+            <span class="keep-count">×${e.count}</span>
+            <span class="keep-main"><b>Any of ${opts.length} items</b>${e.fir ? ` <span class="verdict fir">found in raid</span>` : ""}
+              <div class="sub">${esc(e.why)}: ${esc(opts.slice(0, 5).map((i) => i.name).join(", "))}${opts.length > 5 ? `, +${opts.length - 5} more` : ""}</div></span></div>`;
+        }).join("")}
+        ${questNeeds.size || anyOf.size ? "" : `<div class="muted">No hand-ins for your active quests. (Quests are picked up from the game by the Tarkov Timmy app, or tick them in the Quests tab.)</div>`}
+      </section>
+      <section>
+        <div class="section-title">For your next hideout upgrades</div>
+        ${Object.keys(stash.hideout).length ? "" : `<div class="hint">Set your station levels in the <a href="#" id="go-hideout">Hideout</a> tab so this shows the right next upgrades.</div>`}
+        ${hideoutNeeds.map(({ s, next }) => `<div class="keep-station">${esc(s.name)} → level ${next.level}</div>` +
+          next.items.map((r) => CURRENCY_IDS.has(r.id) ? `<div class="keep-row money"><span class="keep-count">${rub(r.count)}</span><span class="keep-main sub">money</span></div>` : row(r.id, r.count, r.fir, "")).join("")).join("")}
+      </section>
+    </div>`;
+  $("#go-hideout")?.addEventListener("click", (e) => { e.preventDefault(); openStash("hideout"); });
+  wireSquadToggle(renderKeepList);
+}
+
+function renderHideoutLevels() {
+  const d = stash.data;
+  $("#stash-body").innerHTML = `
+    <div class="hint">Tarkov doesn't log your hideout, so set each station's current level once (Hideout screen in game). The keep list then shows what your next upgrades need.</div>
+    <div class="hideout-grid">${d.stations.map((s) => {
+      const cur = Number(stash.hideout[s.id] ?? 0);
+      const max = Math.max(0, ...s.levels.map((l) => l.level));
+      return `<label class="hideout-cell"><span>${esc(s.name)}</span><select data-station="${esc(s.id)}">${Array.from({ length: max + 1 }, (_, n) =>
+        `<option value="${n}" ${n === cur ? "selected" : ""}>${n === 0 ? "Not built" : `Level ${n}`}${n === max ? " (max)" : ""}</option>`).join("")}</select></label>`;
+    }).join("")}</div>`;
+  for (const sel of document.querySelectorAll("[data-station]")) {
+    sel.onchange = () => { stash.hideout[sel.dataset.station] = Number(sel.value); store.set("hideoutLevels", stash.hideout); };
+  }
 }
 
 boot();

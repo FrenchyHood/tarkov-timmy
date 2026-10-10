@@ -5,7 +5,7 @@ const TARKOV_API = "https://api.tarkov.dev/graphql";
 const DATA_FRESH_MS = 60 * 60 * 1000; // refetch upstream at most hourly
 const UPSTREAM_RETRY_MS = 10 * 60 * 1000; // after a failed refresh, wait before trying upstream again
 // Bump when the converted data format changes, so cached copies are refetched right after a deploy.
-const DATA_VERSION = 3;
+const DATA_VERSION = 4;
 const PING_TTL_MS = 3 * 60 * 1000;
 const ROOM_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const NAME_RE = /^[\p{L}\p{N} _.-]{1,24}$/u;
@@ -111,7 +111,7 @@ export default {
     const validRoom = roomCode && ROOM_RE.test(roomCode) && env.ROOM_KEY && (await verifyRoom(roomCode, env.ROOM_KEY));
 
     // GET /api/data/:dataset?room=CODE — tarkov.dev data, cached in a Durable Object so an upstream outage doesn't break us.
-    if (parts[1] === "data" && DATASETS[parts[2]] && request.method === "GET") {
+    if (parts[1] === "data" && LOADERS[parts[2]] && request.method === "GET") {
       if (!validRoom) return json({ error: "unknown room" }, 403);
       const stub = env.ROOMS.get(env.ROOMS.idFromName("__data_cache__"));
       return stub.getDataset(parts[2]).then(
@@ -218,6 +218,8 @@ export class RaidRoom extends DurableObject {
       const ended = new Set(ids(ev.ended));
       const merged = new Set([...(player.quests ?? []), ...ids(ev.active)]);
       player.quests = [...merged].filter((id) => !ended.has(id)).slice(0, 100);
+      // Finished/failed quests, so the stash helper can tell "needed later" from "already done".
+      player.questsEnded = [...new Set([...(player.questsEnded ?? []), ...ended])].slice(-600);
       player.questsAuto = now;
     } else if (ev.type === "heartbeat") {
       // nothing beyond companionSeen
@@ -327,7 +329,7 @@ export class RaidRoom extends DurableObject {
     if (Date.now() - lastFail > UPSTREAM_RETRY_MS) {
       const sources = [
         ["json.tarkov.dev", async () => JSON.stringify(await LOADERS[name]())],
-        ["api.tarkov.dev", () => fetchTarkovDev(DATASETS[name])],
+        ...(DATASETS[name] ? [["api.tarkov.dev", () => fetchTarkovDev(DATASETS[name])]] : []),
       ];
       for (const [label, load] of sources) {
         try {

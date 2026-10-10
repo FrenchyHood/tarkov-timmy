@@ -136,4 +136,59 @@ export async function loadTasks() {
   return { tasks };
 }
 
-export const LOADERS = { maps: loadMaps, tasks: loadTasks };
+// Items for the stash helper: prices, best trader, flea rules, and what each item is needed for
+// (quest hand-ins and hideout upgrades), all keyed by item id.
+export async function loadItems() {
+  const [itemsData, itemsEn, tasksData, tasksEn, tradersEn, hideout, hideoutEn] = await Promise.all([
+    getJson("items"), getJson("items_en"), getJson("tasks"), getJson("tasks_en"), getJson("traders_en"), getJson("hideout"), getJson("hideout_en"),
+  ]);
+  const name = (id) => itemsEn[`${id} Name`] ?? id;
+  const trader = (id) => tradersEn[`${id} Nickname`] ?? id;
+
+  const items = Object.values(itemsData.items)
+    .filter((i) => !i.types?.includes("preset") && !i.types?.includes("disabled"))
+    .map((i) => {
+      const best = (i.sellToTrader ?? []).filter((s) => s.priceRUB > 0).sort((a, b) => b.priceRUB - a.priceRUB)[0];
+      return {
+        id: i.id,
+        name: name(i.id),
+        short: itemsEn[`${i.id} ShortName`] ?? null,
+        w: i.width ?? 1,
+        h: i.height ?? 1,
+        flea: i.avg24hPrice || i.lastLowPrice || null,
+        fleaLevel: i.minLevelForFlea ?? null,
+        noFlea: i.types?.includes("noFlea") ?? false,
+        trader: best ? { name: trader(best.trader), price: best.priceRUB } : null,
+        types: (i.types ?? []).filter((t) => ["barter", "keys", "ammo", "meds", "provisions", "gun", "mods", "armor", "rig", "backpack", "container", "headphones", "glasses", "helmet", "wearable", "grenade"].includes(t)),
+        icon: i.iconLink ?? null,
+        wiki: i.wikiLink ?? null,
+      };
+    });
+
+  // Quest needs: hand-ins (giveItem/plantItem) and keys a quest requires.
+  const quests = {};
+  const add = (id, need) => (quests[id] ??= []).push(need);
+  for (const task of Object.values(tasksData.tasks)) {
+    const taskName = tasksEn[task.name] ?? task.name;
+    for (const o of task.objectives ?? []) {
+      if ((o.type === "giveItem" || o.type === "plantItem") && o.items?.length) {
+        for (const id of o.items) add(id, { task: task.id, taskName, objective: o.id, count: o.count ?? 1, fir: !!o.foundInRaid, kappa: !!task.kappaRequired, alternatives: o.items.length });
+      }
+      for (const alts of o.requiredKeys ?? []) for (const id of alts) add(id, { task: task.id, taskName, count: 1, fir: false, key: true });
+    }
+  }
+
+  const stations = Object.values(hideout).map((s) => ({
+    id: s.id,
+    name: hideoutEn[s.name] ?? s.name,
+    levels: (s.levels ?? []).map((l) => ({
+      level: l.level,
+      items: (l.itemRequirements ?? []).map((r) => ({ id: r.item, count: r.count, fir: !!r.attributes?.foundInRaid })),
+    })),
+  })).sort((a, b) => a.name.localeCompare(b.name));
+
+  if (items.length < 1000) throw new Error(`json.tarkov.dev returned only ${items.length} items`);
+  return { items, quests, stations, fleaLevel: itemsData.fleaMarket?.minPlayerLevel ?? 15 };
+}
+
+export const LOADERS = { maps: loadMaps, tasks: loadTasks, items: loadItems };

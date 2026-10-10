@@ -8,7 +8,8 @@ import { LOADERS } from "../src/tarkov-data.js";
 const outDir = fileURLToPath(new URL("../../data/", import.meta.url));
 await mkdir(outDir, { recursive: true });
 
-for (const [name, load] of Object.entries(LOADERS)) {
+// Item prices change constantly, so they're not worth committing every week; maps and quests are.
+for (const [name, load] of Object.entries(LOADERS).filter(([n]) => n !== "items")) {
   const data = await load();
   const count = data[name]?.length ?? 0;
   if (count < (name === "maps" ? 10 : 100)) throw new Error(`${name}: only ${count} entries, refusing to overwrite the snapshot`);

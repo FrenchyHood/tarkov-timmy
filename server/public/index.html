@@ -52,6 +52,7 @@
       <div id="raid-timer" class="raid-timer" hidden></div>
       <div class="spacer"></div>
       <span class="overlay-only ov-hint" id="ov-hint"></span>
+      <button id="stash-btn" class="btn ghost" title="What to keep, sell and watch for">Stash</button>
       <button id="overlay-btn" class="btn ghost desktop-only" title="Mini-map over the game">Overlay</button>
       <a id="getapp-btn" class="btn ghost web-only" href="/api/download" target="_blank" rel="noopener" title="Windows app with overlay and automatic position sharing">Get the app</a>
       <button id="share-btn" class="btn ghost" title="Copy room link">Invite</button>
@@ -82,6 +83,21 @@
         <div class="tab-body" id="tab-squad" hidden></div>
         <footer class="credits">Map data &amp; art: <a href="https://tarkov.dev" target="_blank" rel="noopener">tarkov.dev</a> (MIT)</footer>
       </aside>
+
+      <!-- Stash helper: covers the map + panel while open -->
+      <section id="stash" class="stash" hidden>
+        <header class="stash-head">
+          <h2>Stash helper</h2>
+          <nav class="seg" id="stash-tabs">
+            <button data-stab="check" class="active">Check an item</button>
+            <button data-stab="keep">Keep list</button>
+            <button data-stab="hideout">Hideout</button>
+          </nav>
+          <div class="spacer"></div>
+          <button class="btn" id="stash-close">Back to map</button>
+        </header>
+        <div class="stash-body" id="stash-body"></div>
+      </section>
     </main>
   </section>
 
