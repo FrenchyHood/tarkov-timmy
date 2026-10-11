@@ -1,2 +1,2 @@
-- Stash screenshots are **deleted after a successful scan** (if "delete screenshots" is on in Settings). The scan and its picture are kept in the app; screenshots that aren't of your stash are left alone.
-- Website update (already live): **My main guns** on the Stash page. Ammo, magazines and attachments that fit them get a purple "For your gun" tag and stay off the sell list.
+- **Stash scanner: text and picture now decide together.** When a label is misread (Tarkov's font makes 0, 8, B and E easy to confuse, e.g. M600U read as "MBEBBU"), every plausible match is compared with the item's picture instead of guessing from the text alone. Fixes items like the M600U and M9A3 showing as unsure or wrong.
+- Exact label reads now only compete with items of exactly that name, and guns with attachments are recognised more reliably.

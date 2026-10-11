@@ -120,16 +120,25 @@ async function ocrRows(img, g, cacheDir) {
 
 // ---------- 3. matching ----------
 
-const LOOK = { O: "0", D: "0", Q: "0", B: "8", 6: "8", E: "8", G: "8", I: "1", L: "1", "|": "1", S: "5", Z: "2", " ": "", "-": "", ".": "", '"': "", "'": "" };
-const norm = (s) => s.toUpperCase().split("").map((ch) => LOOK[ch] ?? ch).join("");
-function lev(a, b) {
+// Edit distance where swapping lookalike characters is only a fraction of a mistake. Tarkov's label font
+// makes 0/8/B/E/6 easy to confuse (M600U was read as "MBEBBU"), so those cost little.
+const clean = (s) => s.toUpperCase().replace(/[\s\-."']/g, "");
+const TIGHT = ["0ODQ", "8B", "6G", "1IL|", "5S", "2Z", "UV"]; // nearly identical glyphs
+const LOOSE = ["0ODQ8BE6G93", "59S"]; // glyphs the OCR mixes up with each other in this font
+function subCost(a, b) {
+  if (a === b) return 0;
+  if (TIGHT.some((g) => g.includes(a) && g.includes(b))) return 0.25;
+  if (LOOSE.some((g) => g.includes(a) && g.includes(b))) return 0.45;
+  return 1;
+}
+function fuzzyCost(a, b) {
   const d = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {
     let prev = d[0];
     d[0] = i;
     for (let j = 1; j <= b.length; j++) {
       const cur = d[j];
-      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + subCost(a[i - 1], b[j - 1]));
       prev = cur;
     }
   }
@@ -137,25 +146,32 @@ function lev(a, b) {
 }
 
 function buildIndex(items) {
-  const byNorm = new Map();
+  const byKey = new Map();
   for (const it of items) {
-    const k = norm(it.short ?? "");
-    if (k) (byNorm.get(k) ?? byNorm.set(k, []).get(k)).push(it);
+    const k = clean(it.short ?? "");
+    if (k) (byKey.get(k) ?? byKey.set(k, []).get(k)).push(it);
   }
-  return byNorm;
+  return byKey;
 }
-function candidatesFor(label, byNorm) {
-  const n = norm(label);
-  if (!n) return null;
-  if (byNorm.has(n)) return byNorm.get(n);
-  let best = null;
-  for (const [k, cands] of byNorm) {
+
+// Every item whose short name is close enough to what the OCR read, best first, each with its text cost.
+// The picture then decides between them (see the scan loop), so near-misses aren't thrown away.
+function candidatesFor(label, byKey) {
+  const n = clean(label);
+  if (!n) return [];
+  // Reading an exact, real short name is strong evidence: only items with that name compete (otherwise a
+  // look-alike name like MP9 could win on a lucky picture match). Near-misses only when nothing is exact.
+  if (byKey.has(n)) return byKey.get(n).map((item) => ({ item, cost: 0 }));
+  const limit = n.length <= 2 ? 0.25 : n.length === 3 ? 0.5 : n.length <= 5 ? 1.4 : 2.2;
+  const hits = [];
+  for (const [k, items] of byKey) {
     if (Math.abs(k.length - n.length) > 2) continue;
-    const d = lev(n, k);
-    const limit = n.length <= 3 ? 0 : n.length <= 5 ? 1 : 2;
-    if (d <= limit && (!best || d < best.d)) best = { d, cands };
+    const cost = fuzzyCost(n, k);
+    if (cost <= limit) for (const item of items) hits.push({ item, cost });
   }
-  return best?.cands ?? null;
+  if (!hits.length) return [];
+  const best = Math.min(...hits.map((h) => h.cost));
+  return hits.filter((h) => h.cost <= best + 0.8).sort((a, b) => a.cost - b.cost).slice(0, 15);
 }
 
 // Words close together are one label ("Alu" + "splint"); drop icon noise the OCR picks up as letters.
@@ -165,6 +181,7 @@ function groupLabels(words) {
     const t = w.text.replace(/^["'\-]+|["'\-]+$/g, "");
     if (!/[A-Za-z0-9]/.test(t) || /^(o+|w+|a|n|i|l|\.)$/i.test(t)) continue;
     if (t.length <= 2 && t !== t.toUpperCase()) continue; // short real labels (PS, T, PP) are upper-case
+    if (/^\d$/.test(t)) continue; // a lone digit is a stack count or icon detail, never a label
     const prev = labels.at(-1);
     if (prev && w.x0 - prev.x1 < 9) { prev.text += " " + t; prev.x1 = w.x1; }
     else labels.push({ text: t, x0: w.x0, x1: w.x1 });
@@ -267,16 +284,15 @@ async function scanStash(file, items, dataDir) {
   const g = detectGrid(img);
   if (!g) return { ok: false, reason: "no-grid" };
   const rows = await ocrRows(img, g, path.join(dataDir, "tessdata"));
-  const byNorm = buildIndex(items);
+  const byKey = buildIndex(items);
   const iconDir = path.join(dataDir, "icon-cache");
 
-  // Labels → candidates. Unique matches first (they also tell us which cells are taken).
+  // Labels → candidate items (with how far each short name is from what the OCR read).
   const found = [];
   rows.forEach((words, row) => {
     for (const l of groupLabels(words)) {
       const col = Math.min(g.cols - 1, Math.max(0, Math.floor(l.x1 / g.c)));
-      const cands = candidatesFor(l.text, byNorm);
-      found.push({ row, col, label: l.text, cands: cands ?? [] });
+      found.push({ row, col, label: l.text, cands: candidatesFor(l.text, byKey) });
     }
   });
   const labelAt = new Set(found.map((f) => `${f.row},${f.col}`));
@@ -290,23 +306,40 @@ async function scanStash(file, items, dataDir) {
   const out = [];
   for (const f of found) {
     if (!f.cands.length) { out.push({ row: f.row, col: f.col, label: f.label, id: null, confidence: 0 }); continue; }
-    let pick = f.cands[0], confidence = 0.95, how = "label";
-    if (f.cands.length > 1) {
+    let pick = f.cands[0].item, confidence = 0.95, how = "label";
+    // An exact, unique label needs nothing else. Otherwise text and picture decide together: every plausible
+    // match is compared with the screenshot, and a bigger text mismatch costs a little picture score.
+    if (f.cands.length > 1 || f.cands[0].cost > 0) {
       const scored = [];
-      for (const cand of f.cands.slice(0, 12)) scored.push({ cand, s: await iconScore(img, g, cand, f.row, f.col, iconDir) });
-      scored.sort((a, b) => b.s - a.s);
-      pick = scored[0].cand;
-      const margin = scored[0].s - (scored[1]?.s ?? -1);
-      confidence = scored[0].s >= 0.3 && margin >= 0.08 ? 0.85 : 0.4;
-      how = "icon";
-      // Modded guns don't look like their stock icon. If the picture is inconclusive and the label sits on a
-      // wide item, it's the gun, not one of its parts.
-      const gun = f.cands.find((c) => c.types?.includes("gun"));
-      if (confidence < 0.5 && gun && span(f.row, f.col) >= 3) { pick = gun; confidence = 0.7; how = "size"; }
+      for (const c of f.cands.slice(0, 12)) {
+        const icon = await iconScore(img, g, c.item, f.row, f.col, iconDir);
+        scored.push({ item: c.item, icon, cost: c.cost, score: icon - 0.25 * c.cost });
+      }
+      scored.sort((a, b) => b.score - a.score);
+      pick = scored[0].item;
+      const margin = scored[0].score - (scored[1]?.score ?? -1);
+      if (f.cands.length > 1) {
+        // Several possibilities: confident only if the picture really looks like the winner and beats the rest.
+        confidence = scored[0].icon >= 0.3 && margin >= 0.08 ? 0.85 : 0.4;
+        how = "icon";
+      } else {
+        // One near-miss match: trust the text unless the picture clearly disagrees.
+        confidence = scored[0].icon >= 0.15 ? 0.85 : 0.4;
+        how = "label+icon";
+      }
+      // Modded guns don't look like their stock icon. If the picture is inconclusive and the label sits on an
+      // item as wide as the gun (no other labels in the way), it's the gun, not one of its parts.
+      const gun = f.cands.find((c) => c.item.types?.includes("gun"))?.item;
+      if (confidence < 0.5 && gun && span(f.row, f.col) >= Math.max(2, gun.w - 1)) { pick = gun; confidence = 0.7; how = "size"; }
+      // Short labels with no exact text match are often icon art read as letters ("EEN"): the picture must agree.
+      else if (clean(f.label).length <= 3 && f.cands[0].cost > 0 && scored[0].icon < 0.35) {
+        out.push({ row: f.row, col: f.col, label: f.label, id: null, confidence: 0 });
+        continue;
+      }
     }
     out.push({
       row: f.row, col: f.col, label: f.label, id: pick.id, name: pick.name, w: pick.w, h: pick.h, how,
-      confidence, alternatives: f.cands.length > 1 ? f.cands.slice(0, 12).map((c) => c.id) : [],
+      confidence, alternatives: f.cands.length > 1 ? f.cands.slice(0, 12).map((c) => c.item.id) : [],
     });
   }
   // The mark sits in the item's right-most column (where the label is), on its bottom row.
