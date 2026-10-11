@@ -363,7 +363,10 @@ function scanScreenshot(file, { manual = false } = {}) {
       const result = await scanStash(file, await getStashItems(), app.getPath("userData"));
       const found = result.ok ? result.items.filter((i) => i.id).length : 0;
       if (!result.ok || found < 3) {
-        if (manual) notify("No stash found", "That screenshot doesn't look like your stash. Open the stash and press your screenshot key.");
+        // No grid at all: not a stash screenshot, so stay quiet unless they asked. A grid but almost nothing
+        // readable: say so, so it doesn't look like the scan silently did nothing.
+        if (result.ok) notify("Couldn't read your stash", "The stash was visible but too few items could be read. Try again with the stash fully open and not mid-scroll.");
+        else if (manual) notify("No stash found", "That screenshot doesn't look like your stash. Open the stash and press your screenshot key.");
         return;
       }
       lastScan = result;

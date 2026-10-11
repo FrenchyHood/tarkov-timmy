@@ -1,2 +1,4 @@
-- **Stash scanner: text and picture now decide together.** When a label is misread (Tarkov's font makes 0, 8, B and E easy to confuse, e.g. M600U read as "MBEBBU"), every plausible match is compared with the item's picture instead of guessing from the text alone. Fixes items like the M600U and M9A3 showing as unsure or wrong.
-- Exact label reads now only compete with items of exactly that name, and guns with attachments are recognised more reliably.
+- **Scrolled stash fixed.** When you scrolled down, the scanner could lock onto the edges of big items (armour, backpacks) instead of the grid and read every label from the wrong spot, so the scan was quietly dropped. It now test-reads a few positions and uses the one that reads real item names. Scrolled screenshots went from ~8 to 35-52 confident items in testing.
+- **Labels split in two are joined again** (e.g. `MCX` + `8"` → MCX 8" handguard).
+- **Cut-off names are recognised:** Tarkov shortens long labels to fit, and icon art sometimes sticks to a label; both now match.
+- Less clutter from icon art misread as text, and a notification if the stash was visible but couldn't be read (instead of silently doing nothing).

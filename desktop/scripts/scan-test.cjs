@@ -26,7 +26,7 @@ app.whenReady().then(async () => {
     for (const file of files) {
       const r = await scanStash(file, items, dataDir);
       if (!r.ok) { log(path.basename(file), "->", r.reason); continue; }
-      log(`\n${path.basename(file)}: ${r.items.length} labels in ${r.ms} ms, grid ${r.grid.cols}x${r.grid.rows} @ ${r.grid.c}px`);
+      log(`\n${path.basename(file)}: ${r.items.length} labels in ${r.ms} ms, grid ${r.grid.cols}x${r.grid.rows} @ ${r.grid.c}px origin (${r.grid.x0}, ${r.grid.y0}) strength ${r.grid.strength}`);
       for (const it of r.items) {
         log(`  r${it.row}c${it.col}`.padEnd(8), JSON.stringify(it.label).padEnd(16), "->", (it.name || "??").padEnd(52),
           `${it.how || ""} ${it.confidence.toFixed(2)}${it.fir ? "  FIR" : ""}`);

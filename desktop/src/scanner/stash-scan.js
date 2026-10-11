@@ -64,8 +64,50 @@ function detectGrid(img) {
   if (!fx || !fy || fx.strength < 1.3 || fy.strength < 1.3) return null; // no grid here: not a stash screenshot
   const c = Math.round((fx.T + fy.T) / 2);
   const bottom = Math.min(img.h - 2, uiY + 949 * s);
+  // Candidate row positions. In a scrolled stash the edges of big items (armour, backpacks) can out-vote the
+  // real grid lines, so we collect a few plausible positions here and let the OCR pick (see pickRows):
+  // the grid-line peaks within half a cell, plus where label text starts (text below, gap above), each +-3 px.
+  const x0 = fx.origin, w = 10 * c;
+  const textPx = (y) => {
+    if (y < 0 || y >= img.h) return 0;
+    let n = 0;
+    for (let x = x0; x < x0 + w; x += 2) {
+      const i = (y * img.w + x) * 4;
+      const b = img.px[i], gr = img.px[i + 1], r = img.px[i + 2];
+      const mn = Math.min(r, gr, b), mx = Math.max(r, gr, b);
+      if (mn > 150 && mx - mn < 45) n++;
+    }
+    return n;
+  };
+  const cache = new Map();
+  const px = (y) => (cache.has(y) ? cache.get(y) : (cache.set(y, textPx(y)), cache.get(y)));
+  const panelTop = expect.y0 - 0.15 * c;
+  const lineAt = (y0) => {
+    let sum = 0, n = 0;
+    for (let y = y0; y < ry1 - 1; y += c) { sum += (gy[y - ry0] ?? 0) + (gy[y - ry0 + 1] ?? 0); n++; }
+    return n ? sum / n : 0;
+  };
+  const edgeAt = (y0) => {
+    let s = 0;
+    for (let top = y0; top + 20 < bottom; top += c) {
+      if (top < panelTop) continue;
+      for (let y = top + 1; y < top + 13; y++) s += px(y);
+      for (let y = top - 6; y < top; y++) s -= 2 * px(y);
+    }
+    return s;
+  };
+  const half = Math.floor(c / 2), base = Math.round(expect.y0);
+  const offs = [];
+  for (let o = -half; o <= half; o++) offs.push({ y: base + o, line: lineAt(base + o), edge: edgeAt(base + o) });
+  const lineTop = Math.max(...offs.map((x) => x.line));
+  const cands = new Set([fy.origin]);
+  offs.forEach((x, i) => {
+    if (x.line >= lineTop * 0.5 && x.line >= (offs[i - 1]?.line ?? 0) && x.line >= (offs[i + 1]?.line ?? 0)) cands.add(x.y);
+  });
+  cands.add(offs.reduce((a, b2) => (b2.edge > a.edge ? b2 : a)).y);
+  const rowCandidates = [...cands].filter((y) => y >= base - half && y <= base + half);
   const rows = Math.max(1, Math.ceil((bottom - fy.origin) / c));
-  return { x0: fx.origin, y0: fy.origin, c, cols: 10, rows, scale: s, strength: Math.min(fx.strength, fy.strength) };
+  return { x0: fx.origin, y0: fy.origin, c, cols: 10, rows, bottom, scale: s, strength: Math.min(fx.strength, fy.strength), rowCandidates };
 }
 
 // ---------- 2. OCR ----------
@@ -103,6 +145,39 @@ function labelStrip(img, g, row) {
   }
   const png = nativeImage.createFromBitmap(out, { width: w, height: h }).resize({ width: w * 3, height: h * 3, quality: "best" }).toPNG();
   return png;
+}
+
+// Try each candidate row position on a few rows and keep the one whose labels are real Tarkov short names.
+async function pickRows(img, g, cacheDir, byKey) {
+  if (!g.rowCandidates?.length) return g;
+  const worker = await getOcr(cacheDir);
+  const tried = new Map();
+  const scoreAt = async (y0) => {
+    if (tried.has(y0)) return tried.get(y0);
+    const trial = { ...g, y0 };
+    let score = 0;
+    for (const row of [1, 2]) {
+      const png = labelStrip(img, trial, row);
+      if (!png) break;
+      const { data } = await worker.recognize(png, {}, { blocks: true });
+      const words = (data.blocks ?? []).flatMap((b) => b.paragraphs.flatMap((p) => p.lines.flatMap((l) => l.words)));
+      for (const l of groupLabels(words.map((w) => ({ text: w.text, x0: w.bbox.x0 / 3, x1: w.bbox.x1 / 3 })))) {
+        const k = clean(l.text);
+        if (byKey.has(k)) score += 2;
+        else if (k.length >= 3 && candidatesFor(l.text, byKey).length) score += 1;
+      }
+    }
+    tried.set(y0, score);
+    return score;
+  };
+  // Quick vote over the candidates, then fine-tune a few pixels around the winner.
+  // Ties go to the position closest to what the grid lines said.
+  const better = (y, s, best) => !best || s > best.s || (s === best.s && Math.abs(y - g.y0) < Math.abs(best.y - g.y0));
+  let best = null;
+  for (const y of new Set([g.y0, ...g.rowCandidates])) { const sc = await scoreAt(y); if (better(y, sc, best)) best = { y, s: sc }; }
+  for (const d of [-4, -2, 2, 4]) { const y = best.y + d, sc = await scoreAt(y); if (better(y, sc, best)) best = { y, s: sc }; }
+  const rows = Math.max(1, Math.ceil((g.bottom - best.y) / g.c));
+  return { ...g, y0: best.y, rows };
 }
 
 async function ocrRows(img, g, cacheDir) {
@@ -169,6 +244,14 @@ function candidatesFor(label, byKey) {
     const cost = fuzzyCost(n, k);
     if (cost <= limit) for (const item of items) hits.push({ item, cost });
   }
+  if (!hits.length && n.length >= 5) {
+    // Tarkov cuts long short names to fit the item ("BigTittyTa"), and icon art sometimes sticks to the front
+    // of a label ("EE4Apolio" for Apollo): accept names the reading starts, or names hidden inside it.
+    for (const [k, items] of byKey) {
+      if (k.length >= 5 && k.startsWith(n)) for (const item of items) hits.push({ item, cost: 0.3 });
+      else if (k.length >= 5 && n.length > k.length && fuzzyCost(n.slice(n.length - k.length), k) <= 0.5) for (const item of items) hits.push({ item, cost: 0.6 });
+    }
+  }
   if (!hits.length) return [];
   const best = Math.min(...hits.map((h) => h.cost));
   return hits.filter((h) => h.cost <= best + 0.8).sort((a, b) => a.cost - b.cost).slice(0, 15);
@@ -179,12 +262,15 @@ function groupLabels(words) {
   const labels = [];
   for (const w of words) {
     const t = w.text.replace(/^["'\-]+|["'\-]+$/g, "");
-    if (!/[A-Za-z0-9]/.test(t) || /^(o+|w+|a|n|i|l|\.)$/i.test(t)) continue;
+    if (!/[A-Za-z0-9]/.test(t)) continue;
+    // Words right next to the previous one belong to the same label ("MCX" + "8"), even digits.
+    const prev = labels.at(-1);
+    if (prev && w.x0 - prev.x1 < 9) { prev.text += " " + t; prev.x1 = w.x1; continue; }
+    // A word on its own: skip the usual OCR noise from icon art.
+    if (/^(o+|w+|a|n|i|l|\.)$/i.test(t)) continue;
     if (t.length <= 2 && t !== t.toUpperCase()) continue; // short real labels (PS, T, PP) are upper-case
     if (/^\d$/.test(t)) continue; // a lone digit is a stack count or icon detail, never a label
-    const prev = labels.at(-1);
-    if (prev && w.x0 - prev.x1 < 9) { prev.text += " " + t; prev.x1 = w.x1; }
-    else labels.push({ text: t, x0: w.x0, x1: w.x1 });
+    labels.push({ text: t, x0: w.x0, x1: w.x1 });
   }
   return labels;
 }
@@ -281,10 +367,12 @@ function firScore(img, g, row, col, h) {
 async function scanStash(file, items, dataDir) {
   const t0 = Date.now();
   const img = loadImage(file);
-  const g = detectGrid(img);
-  if (!g) return { ok: false, reason: "no-grid" };
-  const rows = await ocrRows(img, g, path.join(dataDir, "tessdata"));
   const byKey = buildIndex(items);
+  const tessDir = path.join(dataDir, "tessdata");
+  const g0 = detectGrid(img);
+  if (!g0) return { ok: false, reason: "no-grid" };
+  const g = await pickRows(img, g0, tessDir, byKey);
+  const rows = await ocrRows(img, g, tessDir);
   const iconDir = path.join(dataDir, "icon-cache");
 
   // Labels → candidate items (with how far each short name is from what the OCR read).
@@ -305,7 +393,11 @@ async function scanStash(file, items, dataDir) {
 
   const out = [];
   for (const f of found) {
-    if (!f.cands.length) { out.push({ row: f.row, col: f.col, label: f.label, id: null, confidence: 0 }); continue; }
+    if (!f.cands.length) {
+      // Unrecognised: keep it (so it can be fixed by hand) only if it looks like a real label, not icon art.
+      if (clean(f.label).length >= 5 && /^[A-Z0-9]/.test(f.label.trim())) out.push({ row: f.row, col: f.col, label: f.label, id: null, confidence: 0 });
+      continue;
+    }
     let pick = f.cands[0].item, confidence = 0.95, how = "label";
     // An exact, unique label needs nothing else. Otherwise text and picture decide together: every plausible
     // match is compared with the screenshot, and a bigger text mismatch costs a little picture score.
@@ -352,7 +444,7 @@ async function scanStash(file, items, dataDir) {
     file: path.basename(file),
     at: Date.now(),
     ms: Date.now() - t0,
-    grid: { cols: g.cols, rows: g.rows, c: g.c },
+    grid: { cols: g.cols, rows: g.rows, c: g.c, x0: g.x0, y0: g.y0, strength: Math.round(g.strength * 100) / 100 },
     image: `data:image/jpeg;base64,${crop.toJPEG(82).toString("base64")}`,
     items: out,
   };
