@@ -244,3 +244,15 @@ body.overlay #stash, body.overlay #stash-btn { display: none !important; }
 .legend-k.keep { border-color: var(--pmc); } .legend-k.later { border-color: var(--scav); } .legend-k.valuable { border-color: var(--accent); }
 .legend-k.sell { border-color: #9aa0a6; } .legend-k.unsure { border: 2px dashed var(--boss); }
 @media (max-width: 900px) { .scan-cols { grid-template-columns: 1fr; } .scan-side { position: static; } }
+
+/* main guns */
+.verdict.gun { background: rgba(180,140,255,.14); color: var(--transit); border: 1px solid rgba(180,140,255,.55); text-transform: none; letter-spacing: 0; }
+.scan-box.gun { border-color: rgba(180,140,255,.95); background: rgba(180,140,255,.12); }
+.legend-k.gun { border-color: var(--transit); }
+.guns-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 10px; }
+.guns-bar .search { width: 220px; flex: none; margin: 0; padding: 5px 8px; }
+.gun-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 9px; border-radius: 999px; border: 1px solid var(--transit); color: var(--transit); font-weight: 600; font-size: 12px; }
+.gun-chip button { background: none; border: 0; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 3px; }
+.gun-results { display: flex; flex-wrap: wrap; gap: 4px; flex-basis: 100%; }
+.gun-results:empty { display: none; }
+.gun-hint { flex-basis: 100%; }

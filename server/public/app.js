@@ -1361,7 +1361,55 @@ const JUNK_PER_SLOT = 5000;
 const stash = {
   data: null, loading: null, tab: desktop ? "scan" : "check", query: "", squad: store.get("stashSquad", true), hideout: store.get("hideoutLevels", {}),
   scan: null, scanning: false, selected: null, fixes: store.get("scanFixes", {}), // stash scanner (desktop app only)
+  guns: store.get("mainGuns", []), gunGear: null, // "main guns": their ammo and attachments are kept, not sold
 };
+
+// Item id → names of my main guns it's ammo or an attachment for. Attachments are found by following
+// "fits in this slot" links from each gun (gun → handguard → sight mount → sight ...).
+function gunGear() {
+  if (stash.gunGear) return stash.gunGear;
+  const d = stash.data, gear = new Map();
+  const add = (n, gunName) => {
+    const id = d.items[n]?.id;
+    if (id) gear.set(id, [...new Set([...(gear.get(id) ?? []), gunName])]);
+  };
+  for (const gunId of stash.guns) {
+    const g = d.items.findIndex((i) => i.id === gunId);
+    if (g < 0) continue;
+    const gunName = d.items[g].short || d.items[g].name;
+    const seen = new Set([g]), queue = [g];
+    while (queue.length) for (const c of d.compat?.slots[queue.shift()] ?? []) if (!seen.has(c)) { seen.add(c); queue.push(c); add(c, gunName); }
+    for (const n of d.compat?.ammo[g] ?? []) add(n, gunName);
+  }
+  return (stash.gunGear = gear);
+}
+
+function setGuns(ids) {
+  stash.guns = ids;
+  stash.gunGear = null;
+  store.set("mainGuns", ids);
+}
+
+// "My guns" bar shown above the scan and the item checker.
+function gunsBar() {
+  const d = stash.data;
+  const chips = stash.guns.map((id) => d.byId.get(id)).filter(Boolean)
+    .map((g) => `<span class="gun-chip">${esc(g.short || g.name)}<button data-ungun="${esc(g.id)}" title="Remove">×</button></span>`).join("");
+  return `<div class="guns-bar"><span class="sub">My main guns:</span>${chips || `<span class="sub">none yet</span>`}
+    <input id="gun-search" class="search" placeholder="Add a gun (e.g. M4A1)…" autocomplete="off" spellcheck="false" />
+    <div id="gun-results" class="gun-results"></div>
+    <div class="sub gun-hint">Ammo and attachments that fit them get a purple <b>For your gun</b> tag and stay off the sell list.</div></div>`;
+}
+function wireGunsBar(rerender) {
+  for (const b of document.querySelectorAll("[data-ungun]")) b.onclick = () => { setGuns(stash.guns.filter((g) => g !== b.dataset.ungun)); rerender(); };
+  const input = $("#gun-search");
+  if (!input) return;
+  input.oninput = () => {
+    const guns = searchItems(input.value).filter((i) => i.types?.includes("gun") && !stash.guns.includes(i.id)).slice(0, 6);
+    $("#gun-results").innerHTML = guns.map((g) => `<button class="btn small" data-addgun="${esc(g.id)}">${esc(g.name)}</button>`).join("");
+    for (const b of document.querySelectorAll("[data-addgun]")) b.onclick = () => { setGuns([...stash.guns, b.dataset.addgun]); rerender(); };
+  };
+}
 
 const rub = (n) => (n == null ? "–" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M ₽` : n >= 1e4 ? `${Math.round(n / 1e3)}k ₽` : `${Math.round(n).toLocaleString()} ₽`);
 
@@ -1407,17 +1455,19 @@ function itemVerdict(item) {
   const fleaOk = item.flea && !item.noFlea;
   const best = Math.max(item.trader?.price ?? 0, fleaOk ? item.flea : 0);
   const perSlot = best / slots;
+  const forGuns = gunGear().get(item.id) ?? [];
   const tags = [];
   if (keep.length) tags.push(["keep", "Keep"]);
-  else if (later.length) tags.push(["later", "Needed later"]);
+  if (forGuns.length) tags.push(["gun", `For your ${forGuns.join(", ")}`]);
+  if (!keep.length && later.length) tags.push(["later", "Needed later"]);
   if (perSlot >= VALUABLE_PER_SLOT) tags.push(["valuable", "Valuable"]);
-  if (!keep.length && !later.length && best && perSlot < JUNK_PER_SLOT) tags.push(["junk", "Low value"]);
+  if (!keep.length && !later.length && !forGuns.length && best && perSlot < JUNK_PER_SLOT) tags.push(["junk", "Low value"]);
   // Where to sell, if you're selling: flea only wins when it pays clearly more than the best trader.
   let sell = null;
   if (item.trader && fleaOk && item.flea > item.trader.price * 1.2) sell = `Flea ~${rub(item.flea)}${item.fleaLevel ? ` (from level ${item.fleaLevel})` : ""}, or ${item.trader.name} ${rub(item.trader.price)}`;
   else if (item.trader) sell = `${item.trader.name} ${rub(item.trader.price)}${fleaOk ? ` · flea ~${rub(item.flea)}` : ""}`;
   else if (fleaOk) sell = `Flea ~${rub(item.flea)}${item.fleaLevel ? ` (from level ${item.fleaLevel})` : ""}`;
-  return { keep, later, tags, sell, perSlot, slots };
+  return { keep, later, forGuns, tags, sell, perSlot, slots };
 }
 
 function itemCard(item, extra = "") {
@@ -1483,7 +1533,7 @@ function scanItems() {
     const item = id ? d.byId.get(id) : null;
     const v = item ? itemVerdict(item) : null;
     const unsure = !fixId && (!item || it.confidence < 0.5);
-    const kind = !item ? "unknown" : v.keep.length ? "keep" : v.later.length ? "later" : v.tags.some(([c]) => c === "valuable") ? "valuable" : "sell";
+    const kind = !item ? "unknown" : v.keep.length ? "keep" : v.forGuns.length ? "gun" : v.later.length ? "later" : v.tags.some(([c]) => c === "valuable") ? "valuable" : "sell";
     return { ...it, id, item, v, unsure, fixed: !!fixId, kind };
   });
 }
@@ -1514,7 +1564,7 @@ function renderScan() {
   // Sell list: everything not needed for quests/hideout, grouped by where it sells best.
   const sell = new Map();
   for (const i of known) {
-    if (i.kind === "keep" || i.kind === "later") continue;
+    if (i.kind === "keep" || i.kind === "later" || i.kind === "gun") continue;
     const b = bestSale(i.item);
     if (!b) continue;
     const g = sell.get(b.where) ?? { total: 0, items: new Map() };
@@ -1530,13 +1580,14 @@ function renderScan() {
   body.innerHTML = `
     <div class="scan-head">
       <div class="scan-chips">
-        <span class="verdict keep">${count("keep")} keep</span><span class="verdict later">${count("later")} needed later</span>
+        <span class="verdict keep">${count("keep")} keep</span>${stash.guns.length ? `<span class="verdict gun">${count("gun")} for your guns</span>` : ""}<span class="verdict later">${count("later")} needed later</span>
         <span class="verdict valuable">${count("valuable")} valuable</span><span class="verdict junk">${count("sell")} safe to sell</span>
         ${items.filter((i) => i.unsure).length ? `<span class="verdict unsure">${items.filter((i) => i.unsure).length} unsure</span>` : ""}
         <span class="sub">· ${known.length} items worth ~${rub(total)} · scanned ${new Date(s.at).toLocaleTimeString()}</span>
       </div>
       ${scanBtn}
     </div>
+    ${gunsBar()}
     <div class="scan-cols">
       <div>
         <div class="scan-img" style="aspect-ratio:${cols} / ${rows}">
@@ -1548,7 +1599,7 @@ function renderScan() {
               title="${esc(i.item?.name ?? `Unrecognised: ${i.label}`)}"></button>`;
           }).join("")}
         </div>
-        <div class="sub" style="margin-top:6px">Click an item for details. Outline: <span class="legend-k keep">keep</span> <span class="legend-k later">needed later</span>
+        <div class="sub" style="margin-top:6px">Click an item for details. Outline: <span class="legend-k keep">keep</span> <span class="legend-k gun">for your guns</span> <span class="legend-k later">needed later</span>
           <span class="legend-k valuable">valuable</span> <span class="legend-k sell">safe to sell</span> <span class="legend-k unsure">unsure</span></div>
       </div>
       <div class="scan-side">
@@ -1564,6 +1615,7 @@ function renderScan() {
     </div>`;
 
   $("#scan-latest").onclick = scanLatest;
+  wireGunsBar(renderScan);
   for (const b of body.querySelectorAll(".scan-box")) b.onclick = () => { stash.selected = Number(b.dataset.n); renderScan(); };
   wireScanDetail(sel);
 }
@@ -1622,6 +1674,7 @@ function renderStashCheck() {
       <input id="stash-search" class="search" placeholder="Type an item name, e.g. bolts, gpu, salewa…" value="${esc(stash.query)}" autocomplete="off" spellcheck="false" />
       ${squadToggle()}
     </div>
+    ${gunsBar()}
     <div class="hint">Hover an item in your stash, read its name, and type a few letters here. <b>Keep</b> = your active quests or next hideout upgrade need it.
       <b>Valuable</b> = worth ${rub(VALUABLE_PER_SLOT)}+ per slot. Items marked <i>found in raid</i> must be ones you brought out of a raid yourself.</div>
     <div id="stash-results">${stash.query.trim().length < 2 ? "" : results.map((i) => itemCard(i)).join("") || `<div class="muted">No items match “${esc(stash.query)}”.</div>`}</div>`;
@@ -1633,6 +1686,7 @@ function renderStashCheck() {
     $("#stash-results").innerHTML = stash.query.trim().length < 2 ? "" : searchItems(stash.query).map((i) => itemCard(i)).join("") || `<div class="muted">No items match.</div>`;
   };
   wireSquadToggle(renderStashCheck);
+  wireGunsBar(renderStashCheck);
 }
 
 function renderKeepList() {

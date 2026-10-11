@@ -188,8 +188,22 @@ export async function loadItems() {
     })),
   })).sort((a, b) => a.name.localeCompare(b.name));
 
+  // Gun compatibility, as indexes into `items` to keep it small: which parts fit each item's slots
+  // (follow these from a gun to find every attachment for it), and which ammo each gun takes.
+  const index = new Map(items.map((it, n) => [it.id, n]));
+  const slots = {}, ammo = {};
+  for (const raw of Object.values(itemsData.items)) {
+    const n = index.get(raw.id);
+    if (n === undefined) continue;
+    const fits = new Set();
+    for (const s of raw.properties?.slots ?? []) for (const id of s.filters?.allowedItems ?? []) if (index.has(id)) fits.add(index.get(id));
+    if (fits.size) slots[n] = [...fits];
+    const rounds = (raw.properties?.allowedAmmo ?? []).map((id) => index.get(id)).filter((x) => x !== undefined);
+    if (rounds.length) ammo[n] = rounds;
+  }
+
   if (items.length < 1000) throw new Error(`json.tarkov.dev returned only ${items.length} items`);
-  return { items, quests, stations, fleaLevel: itemsData.fleaMarket?.minPlayerLevel ?? 15 };
+  return { items, quests, stations, compat: { slots, ammo }, fleaLevel: itemsData.fleaMarket?.minPlayerLevel ?? 15 };
 }
 
 export const LOADERS = { maps: loadMaps, tasks: loadTasks, items: loadItems };

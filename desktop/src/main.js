@@ -368,6 +368,9 @@ function scanScreenshot(file, { manual = false } = {}) {
       }
       lastScan = result;
       fs.writeFileSync(lastScanPath(), JSON.stringify(result));
+      // The scan (including the stash picture) is saved, so the 5 MB screenshot isn't needed any more.
+      // Only stash screenshots that scanned successfully are removed; anything else is left alone.
+      if (settings.deleteScreenshots) fs.promises.unlink(file).catch(() => {});
       mainWin?.webContents.send("timmy:stash-scan", result);
       notify("Stash scanned", `${found} items recognised. Open Tarkov Timmy → Stash to see what to keep and sell.`);
     } catch (e) {
