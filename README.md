@@ -22,7 +22,7 @@ Deploy the `server/` folder to your own Cloudflare account (free) and share room
 Nothing reads game memory or hooks into the game. The app only reads files Tarkov writes by itself:
 
 1. **Screenshots.** When you press the in-game screenshot key (Print Screen by default), Tarkov names the file after your coordinates and facing. The app reads the name, sends your position, and optionally deletes the file.
-2. **Log files.** They say which map you queued into and when the raid starts and ends, so the map switches by itself and the raid timer runs.
+2. **Log files.** They say which map you queued into and when the raid starts and ends, so the map switches by itself.
 
 **Your marker only updates when you press the screenshot key.** The app deliberately does not press it for you, because simulated keypresses into the game look like a macro to anti-cheat.
 
@@ -37,7 +37,6 @@ The overlay is a normal always-on-top window, not an injected one. It shows over
 - **Route tab:** a suggested order to visit your squad's quest objectives plus the best-value loot containers on the way, ending at your ticked extract. Straight lines between stops (there's no walkable-path data for Tarkov). Stops you've screenshotted near drop off.
 - **Follow me (◎):** keeps your pin centred at your zoom, also after a refresh. Panning pauses it.
 - **PMC / Scav** is detected automatically from the raid start (your PMC profile is learned from raids with a start countdown).
-- **Raid timer** with sound alerts at 10 and 5 minutes left.
 - **Stash helper** (Stash button): search any item for a verdict (Keep / Needed later / Valuable / Low value) with the reasons, best trader and flea price (and the item's flea level), plus a **Keep list** of everything your squad's active quests and next hideout upgrades need. Set hideout levels once in its Hideout tab.
 - **Stash scanner** (desktop app): out of raid, open your stash and press your Tarkov screenshot key. The app reads the item labels off the screenshot (OCR, tesseract.js), breaks ties by comparing tarkov.dev's official icons, detects the found-in-raid mark, and shows the stash outlined by verdict with a sell list. Pick **main guns** and their ammo, magazines and attachments (found via tarkov.dev's slot-compatibility data) are kept off the sell list. Runs locally; no memory reading.
 - **Overlay** (app): **F9** shows/hides it, **F10** switches between clicking the map and clicking through to the game. Drag it by its top bar and resize from any edge or the corner grip; size, position and opacity are remembered. It mirrors the main window's layers, floor, map and route settings. Hotkeys can be changed in Settings.

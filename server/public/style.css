@@ -57,8 +57,6 @@ dialog .btn { width: 100%; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .seg button { background: transparent; color: var(--muted); border: 0; padding: 7px 10px; font: inherit; cursor: pointer; }
 .seg button.active { background: var(--panel-2); color: var(--text); }
-.raid-timer { font-variant-numeric: tabular-nums; font-weight: 600; padding: 6px 10px; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); }
-.raid-timer.low { color: var(--boss); border-color: var(--boss); }
 .conn { width: 10px; height: 10px; border-radius: 50%; background: var(--boss); }
 .conn.ok { background: var(--pmc); }
 .panel-toggle { display: none; }
@@ -148,7 +146,6 @@ body.overlay #room { overflow: hidden; border: 1px solid rgba(214,178,94,.45); b
 body.overlay .topbar { padding: 4px 8px; gap: 6px; flex-wrap: nowrap; -webkit-app-region: drag; cursor: move; user-select: none; }
 body.overlay .topbar > * { display: none; }
 body.overlay .topbar > .brand, body.overlay .topbar > .spacer, body.overlay .topbar > .overlay-only { display: flex; }
-body.overlay .topbar > #raid-timer:not([hidden]) { display: block; padding: 1px 8px; font-size: 12px; }
 body.overlay .brand-text { display: none; }
 body.overlay #ov-map { font-weight: 700; font-size: 13px; }
 body.overlay .ov-hint { font-size: 11px; color: var(--muted); }

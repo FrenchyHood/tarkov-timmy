@@ -37,11 +37,6 @@ function ago(ms) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   return `${Math.floor(s / 3600)}h ago`;
 }
-function fmtClock(sec) {
-  sec = Math.max(0, Math.floor(sec));
-  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
-}
-
 // ---------- app state ----------
 
 const app = {
@@ -71,7 +66,6 @@ const app = {
   trail: [],             // my positions this raid (for skipping route stops I've already visited)
   local: null,           // desktop companion status
   seenPings: null,
-  timerAlerts: new Set(),
 };
 
 const me = () => app.server?.players?.[app.name.toLowerCase()] ?? null;
@@ -271,7 +265,6 @@ function onServerState() {
   drawExtracts();
   drawQuests();
   renderActiveTab();
-  updateTimer();
   alertNewPings();
   autoFloor();
   trackTrail();
@@ -312,18 +305,6 @@ function alertNewPings() {
     beep(PING_SOUNDS[p.kind] ?? PING_SOUNDS.go);
     const mapName = app.maps.find((m) => m.nameId === p.map)?.name ?? "";
     desktop?.notify(`${p.by}: ${PING_KINDS[p.kind].label}`, mapName ? `Pinged on ${mapName}` : "");
-  }
-}
-
-function timerAlert(raidKey, left) {
-  for (const mins of [10, 5]) {
-    const key = `${raidKey}:${mins}`;
-    if (left <= mins * 60 && left > mins * 60 - 30 && !app.timerAlerts.has(key)) {
-      app.timerAlerts.add(key);
-      if (!ALERTS) continue;
-      beep([[440, 0.15], [440, 0.15], [440, 0.3]]);
-      desktop?.notify(`${mins} minutes left in raid`, "Start heading to your extract.");
-    }
   }
 }
 
@@ -460,7 +441,7 @@ function wireUi() {
       if (id?.hotkeys) $("#ov-hint").textContent = `${id.hotkeys.overlay} hide · ${id.hotkeys.clickThrough} click-through`;
     });
   }
-  setInterval(() => { updateTimer(); if (app.tab === "squad") renderSquadTab(); drawPlayers(); }, 1000);
+  setInterval(() => { if (app.tab === "squad") renderSquadTab(); drawPlayers(); }, 1000);
 }
 
 function flash(el, text) {
@@ -501,21 +482,6 @@ function fillMapSelect() {
 
 function renderFaction() {
   for (const b of document.querySelectorAll("#faction-toggle button")) b.classList.toggle("active", b.dataset.faction === myFaction());
-}
-
-function updateTimer() {
-  const el = $("#raid-timer");
-  const map = currentMap();
-  const players = Object.values(app.server?.players ?? {});
-  // Prefer my raid; fall back to any squadmate's raid on this map.
-  const raid = [me(), ...players].map((p) => p?.raid).find((r) => r?.state === "started" && r.startedAt && r.map === map?.nameId);
-  if (!raid || !map?.raidDuration) { el.hidden = true; return; }
-  const left = map.raidDuration * 60 - (serverNow() - raid.startedAt) / 1000;
-  if (left < -300) { el.hidden = true; return; }
-  el.hidden = false;
-  el.textContent = left > 0 ? `⏱ ${fmtClock(left)}` : "⏱ 0:00";
-  el.classList.toggle("low", left < 600);
-  timerAlert(raid.startedAt, left);
 }
 
 // ---------- map setup ----------
@@ -637,7 +603,6 @@ function selectMap(id) {
   drawPings();
   drawRoute();
   renderActiveTab();
-  updateTimer();
 }
 
 // Which floor a game position is on, using tarkov.dev's floor extents: a height range,
