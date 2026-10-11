@@ -5,7 +5,7 @@ const TARKOV_API = "https://api.tarkov.dev/graphql";
 const DATA_FRESH_MS = 60 * 60 * 1000; // refetch upstream at most hourly
 const UPSTREAM_RETRY_MS = 10 * 60 * 1000; // after a failed refresh, wait before trying upstream again
 // Bump when the converted data format changes, so cached copies are refetched right after a deploy.
-const DATA_VERSION = 6;
+const DATA_VERSION = 7;
 const PING_TTL_MS = 3 * 60 * 1000;
 const ROOM_RE = /^[A-Za-z0-9_-]{4,40}$/;
 const NAME_RE = /^[\p{L}\p{N} _.-]{1,24}$/u;

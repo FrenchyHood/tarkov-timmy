@@ -159,6 +159,7 @@ export async function loadItems() {
         fleaLevel: i.minLevelForFlea ?? null,
         noFlea: i.types?.includes("noFlea") ?? false,
         trader: best ? { name: trader(best.trader), price: best.priceRUB } : null,
+        buyable: (i.buyFromTrader ?? []).length > 0, // a trader sells it: always replaceable
         types: (i.types ?? []).filter((t) => ["barter", "keys", "ammo", "meds", "provisions", "gun", "mods", "armor", "rig", "backpack", "container", "headphones", "glasses", "helmet", "wearable", "grenade"].includes(t)),
         icon: i.iconLink ?? null,
         grid: i.gridImageLink ?? null, // full-size stash icon, used by the desktop app's stash scanner

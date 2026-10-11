@@ -1322,6 +1322,9 @@ function desktopStatusHtml() {
 
 const CURRENCY_IDS = new Set(["5449016a4bdc2d6f028b456f", "5696686a4bdc2da3298b456a", "569668774bdc2da2298b4568"]); // ₽ $ €
 const VALUABLE_PER_SLOT = 40000;
+// Tarkov has no public rarity stat; market price is the best stand-in (people pay more for what's hard to
+// find). An item needed found-in-raid later is worth holding only if it's at least this valuable.
+const RARE_PRICE = 40000;
 const JUNK_PER_SLOT = 5000;
 const stash = {
   data: null, loading: null, tab: desktop ? "scan" : "check", query: "", squad: store.get("stashSquad", true), hideout: store.get("hideoutLevels", {}),
@@ -1401,11 +1404,12 @@ function itemVerdict(item) {
   const active = stashActiveQuests();
   const ended = myEndedQuests();
   const keep = [], later = [];
+  let laterNeedsFir = false; // a later need that only a found-in-raid copy can fill (can't just buy it then)
   for (const q of d.quests[item.id] ?? []) {
     const who = active.get(q.task);
     const what = q.key ? `key for ${q.taskName}` : `${q.taskName} needs ${q.count}${q.fir ? " found in raid" : ""}${q.alternatives > 1 ? " (one of several items)" : ""}`;
     if (who) keep.push(`${what} · ${who.join(", ")}`);
-    else if (!ended.has(q.task)) later.push(`${what}${q.kappa ? " · Kappa" : ""}`);
+    else if (!ended.has(q.task)) { later.push(`${what}${q.kappa ? " · Kappa" : ""}`); laterNeedsFir ||= q.fir; }
   }
   for (const s of d.stations) {
     const cur = Number(stash.hideout[s.id] ?? 0);
@@ -1414,6 +1418,7 @@ function itemVerdict(item) {
       const r = l.items.find((x) => x.id === item.id);
       if (!r) continue;
       (l.level === cur + 1 ? keep : later).push(`Hideout: ${s.name} ${l.level} needs ${r.count}${r.fir ? " found in raid" : ""}`);
+      if (l.level > cur + 1) laterNeedsFir ||= r.fir;
     }
   }
   const slots = item.w * item.h;
@@ -1421,10 +1426,20 @@ function itemVerdict(item) {
   const best = Math.max(item.trader?.price ?? 0, fleaOk ? item.flea : 0);
   const perSlot = best / slots;
   const forGuns = gunGear().get(item.id) ?? [];
+  // "Needed later" only means hold it if you couldn't easily get another: a later found-in-raid need for
+  // something valuable. Anything you can buy then (no FIR needed, or a trader sells it) or that's cheap and
+  // common can be used or sold now.
+  const market = (fleaOk ? item.flea : 0) || (item.trader ? item.trader.price * 2 : 0);
+  const holdLater = !keep.length && later.length > 0 && laterNeedsFir && market >= RARE_PRICE;
+  const replaceable = !keep.length && later.length > 0 && !holdLater;
+  const replaceNote = !replaceable ? null
+    : !laterNeedsFir ? (item.buyable ? "a trader sells it, buy one when you need it" : "found in raid isn't required, so you can buy one when you need it")
+    : `common enough to find again (~${rub(market)})`;
   const tags = [];
   if (keep.length) tags.push(["keep", "Keep"]);
   if (forGuns.length) tags.push(["gun", `For your ${forGuns.join(", ")}`]);
-  if (!keep.length && later.length) tags.push(["later", "Needed later"]);
+  if (holdLater) tags.push(["later", "Hold: needed later, hard to replace"]);
+  if (replaceable) tags.push(["replace", "Needed later, easy to replace"]);
   if (perSlot >= VALUABLE_PER_SLOT) tags.push(["valuable", "Valuable"]);
   if (!keep.length && !later.length && !forGuns.length && best && perSlot < JUNK_PER_SLOT) tags.push(["junk", "Low value"]);
   // Where to sell, if you're selling: flea only wins when it pays clearly more than the best trader.
@@ -1432,7 +1447,7 @@ function itemVerdict(item) {
   if (item.trader && fleaOk && item.flea > item.trader.price * 1.2) sell = `Flea ~${rub(item.flea)}${item.fleaLevel ? ` (from level ${item.fleaLevel})` : ""}, or ${item.trader.name} ${rub(item.trader.price)}`;
   else if (item.trader) sell = `${item.trader.name} ${rub(item.trader.price)}${fleaOk ? ` · flea ~${rub(item.flea)}` : ""}`;
   else if (fleaOk) sell = `Flea ~${rub(item.flea)}${item.fleaLevel ? ` (from level ${item.fleaLevel})` : ""}`;
-  return { keep, later, forGuns, tags, sell, perSlot, slots };
+  return { keep, later, forGuns, holdLater, replaceable, replaceNote, tags, sell, perSlot, slots };
 }
 
 function itemCard(item, extra = "") {
@@ -1445,7 +1460,7 @@ function itemCard(item, extra = "") {
       <div class="item-title">${esc(item.name)} ${v.tags.map(([c, t]) => `<span class="verdict ${c}">${t}</span>`).join("")}${extra}</div>
       <div class="item-sub">${v.sell ? `Sell: ${esc(v.sell)}` : "No sell price"} · ${v.slots} slot${v.slots > 1 ? "s" : ""}${v.perSlot ? ` · ${rub(v.perSlot)}/slot` : ""}
         ${item.wiki ? ` · <a href="${esc(item.wiki)}" target="_blank" rel="noopener">wiki</a>` : ""}</div>
-      ${list(v.keep, "keep")}${list(v.later, "later", 2)}
+      ${list(v.keep, "keep")}${list(v.later, "later", 2)}${v.replaceNote ? `<div class="item-sub">Fine to use or sell now: ${esc(v.replaceNote)}.</div>` : ""}
     </div>
   </div>`;
 }
@@ -1498,7 +1513,7 @@ function scanItems() {
     const item = id ? d.byId.get(id) : null;
     const v = item ? itemVerdict(item) : null;
     const unsure = !fixId && (!item || it.confidence < 0.5);
-    const kind = !item ? "unknown" : v.keep.length ? "keep" : v.forGuns.length ? "gun" : v.later.length ? "later" : v.tags.some(([c]) => c === "valuable") ? "valuable" : "sell";
+    const kind = !item ? "unknown" : v.keep.length ? "keep" : v.forGuns.length ? "gun" : v.holdLater ? "later" : v.tags.some(([c]) => c === "valuable") ? "valuable" : "sell";
     return { ...it, id, item, v, unsure, fixed: !!fixId, kind };
   });
 }
@@ -1545,7 +1560,7 @@ function renderScan() {
   body.innerHTML = `
     <div class="scan-head">
       <div class="scan-chips">
-        <span class="verdict keep">${count("keep")} keep</span>${stash.guns.length ? `<span class="verdict gun">${count("gun")} for your guns</span>` : ""}<span class="verdict later">${count("later")} needed later</span>
+        <span class="verdict keep">${count("keep")} keep</span>${stash.guns.length ? `<span class="verdict gun">${count("gun")} for your guns</span>` : ""}<span class="verdict later">${count("later")} hold for later</span>
         <span class="verdict valuable">${count("valuable")} valuable</span><span class="verdict junk">${count("sell")} safe to sell</span>
         ${items.filter((i) => i.unsure).length ? `<span class="verdict unsure">${items.filter((i) => i.unsure).length} unsure</span>` : ""}
         <span class="sub">· ${known.length} items worth ~${rub(total)} · scanned ${new Date(s.at).toLocaleTimeString()}</span>
@@ -1564,7 +1579,7 @@ function renderScan() {
               title="${esc(i.item?.name ?? `Unrecognised: ${i.label}`)}"></button>`;
           }).join("")}
         </div>
-        <div class="sub" style="margin-top:6px">Click an item for details. Outline: <span class="legend-k keep">keep</span> <span class="legend-k gun">for your guns</span> <span class="legend-k later">needed later</span>
+        <div class="sub" style="margin-top:6px">Click an item for details. Outline: <span class="legend-k keep">keep</span> <span class="legend-k gun">for your guns</span> <span class="legend-k later">hold for later</span>
           <span class="legend-k valuable">valuable</span> <span class="legend-k sell">safe to sell</span> <span class="legend-k unsure">unsure</span></div>
       </div>
       <div class="scan-side">
