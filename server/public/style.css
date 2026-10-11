@@ -254,3 +254,4 @@ body.overlay #stash, body.overlay #stash-btn { display: none !important; }
 .gun-results:empty { display: none; }
 .gun-hint { flex-basis: 100%; }
 .verdict.replace { color: #9fb4c8; border: 1px dashed rgba(159,180,200,.5); text-transform: none; letter-spacing: 0; }
+.remove-player { align-self: center; opacity: .6; } .row:hover .remove-player { opacity: 1; }

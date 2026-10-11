@@ -290,6 +290,14 @@ export class RaidRoom extends DurableObject {
       case "hello":
         this.playerFor(m.name);
         break;
+      case "remove": {
+        // Drop someone from the squad list (old callsigns, test entries). Their app re-adds them if it's
+        // still connected, so this only clears out people who've really gone.
+        const key = typeof m.player === "string" ? m.player.trim().toLowerCase() : "";
+        if (!this.state.players[key]) return;
+        delete this.state.players[key];
+        break;
+      }
       default:
         return;
     }

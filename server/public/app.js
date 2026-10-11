@@ -1279,7 +1279,8 @@ function renderSquadTab() {
       return `<div class="row" data-player="${esc(k)}"><span class="dot" style="background:${playerColor(k)}"></span>
         <span class="main"><div class="title">${esc(p.name)}${k === app.name.toLowerCase() ? " (you)" : ""} <span class="tag">${p.faction === "scav" ? "Scav" : "PMC"}</span></div>
           <div class="sub">${raid}</div>
-          <div class="sub">${p.pos ? `Position ${ago(serverNow() - p.pos.ts)} (${p.pos.source})` : "No position yet"} · ${companion ? "Timmy app connected" : "Timmy app offline"}</div></span></div>`;
+          <div class="sub">${p.pos ? `Position ${ago(serverNow() - p.pos.ts)} (${p.pos.source})` : "No position yet"} · ${companion ? "Timmy app connected" : "Timmy app offline"}</div></span>
+        ${k === app.name.toLowerCase() ? "" : `<button class="btn small remove-player" data-remove="${esc(k)}" title="Remove from the squad list">Remove</button>`}</div>`;
     }).join("") || `<div class="muted">Nobody here yet.</div>`}
     <div class="section-title">Invite your squad</div>
     <span class="code">${esc(link)}</span>
@@ -1291,6 +1292,13 @@ function renderSquadTab() {
       <a class="btn" href="tarkovtimmy://join/${esc(app.room)}?server=${encodeURIComponent(location.origin)}">Open this room in the app</a>`}
     <div style="margin-top:10px"><button class="btn" id="rename">${desktop ? "App settings" : "Change callsign"}</button></div>
   `;
+  for (const b of el.querySelectorAll("[data-remove]")) {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const p = app.server.players[b.dataset.remove];
+      if (p && confirm(`Remove ${p.name} from the squad list? If their Tarkov Timmy app is still running, they'll reappear.`)) send({ t: "remove", player: b.dataset.remove });
+    };
+  }
   for (const row of el.querySelectorAll("[data-player]")) {
     row.onclick = () => {
       const p = app.server.players[row.dataset.player];
